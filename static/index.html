@@ -57,6 +57,12 @@
   </div>
 
   <div class="card">
+    <h2>节点切换</h2>
+    <div class="dim" style="margin-bottom:6px">每个策略组一行：选“自动”按延迟选优，选具体节点即固定走它。选择后自动保存并热重载生效，不用再点应用。</div>
+    <div id="switchList"></div>
+  </div>
+
+  <div class="card">
     <h2>订阅</h2>
     <div id="subList"></div>
     <div class="row" style="margin-top:8px">
@@ -123,6 +129,54 @@ function render(){
 
   const gl = document.getElementById("groupList");
   gl.innerHTML = S.groups.map((g,i)=> groupHtml(g,i)).join("");
+  renderSwitch();
+}
+
+function renderSwitch(){
+  const el = document.getElementById("switchList");
+  if (!el) return;
+  const hasNodes = S.subs.some(s => ((S.nodes[s.tag]||{}).nodes||[]).length);
+  el.innerHTML = S.groups.map((g,i)=>{
+    let opts = `<option value=""${g.mode==="auto"?" selected":""}>自动（延迟最优）</option>`;
+    let found = g.mode !== "manual";
+    for (const s of S.subs){
+      const c = S.nodes[s.tag];
+      if (!c || !c.nodes || !c.nodes.length) continue;
+      opts += `<optgroup label="${esc(s.tag)}">` + c.nodes.map((n,j)=>{
+        const sel = g.mode==="manual" && g.node && g.node.sub===s.tag && g.node.name===n.name;
+        if (sel) found = true;
+        return `<option value="${esc(s.tag)}|${j}"${sel?" selected":""}>${esc(n.name)} (${esc(n.proto)})</option>`;
+      }).join("") + "</optgroup>";
+    }
+    if (g.mode==="manual" && g.node && !found)
+      opts += `<option value="keep" selected>${esc(g.node.name)}（当前固定）</option>`;
+    return `<div class="row" style="margin:7px 0">
+      <span style="min-width:150px">${esc(g.name)} <span class="tag">${esc(g.id)}</span></span>
+      <select class="nodesel" style="flex:1" onchange="switchNode(${i}, this.value)">${opts}</select>
+      ${hasNodes ? "" : '<span class="dim">先拉取订阅</span>'}
+    </div>`;
+  }).join("");
+}
+
+async function switchNode(i, v){
+  const g = S.groups[i];
+  if (v === ""){ g.mode = "auto"; }
+  else if (v === "keep"){ /* 保持当前固定节点 */ }
+  else {
+    const [tag, j] = v.split("|");
+    const n = ((S.nodes[tag]||{}).nodes||[])[Number(j)];
+    if (!n) return;
+    g.mode = "manual";
+    g.node = { sub: tag, name: n.name, link: n.link };
+  }
+  render();
+  msg("切换节点中…");
+  const sv = await save();
+  if (!sv.ok){ msg(sv.message || "保存失败", true); return; }
+  const r = await api("/api/apply");
+  msg(r.ok ? "✓ 已切换：" + g.name + (g.mode==="manual" && g.node ? " → " + g.node.name : " → 自动") + "（已热重载）"
+           : "✗ " + (r.message || "应用失败") + (r.output ? "\n" + r.output : ""), !r.ok);
+  const st = await api("/api/state"); S.dae = st.dae; render();
 }
 
 function nodeOptions(g){
