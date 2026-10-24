@@ -62,8 +62,16 @@ if [ -t 0 ] && [ -t 1 ]; then
     if [ -z "$_p1" ]; then ADMIN_PASS=""; break; fi
     printf '   再输入一次确认: ' > /dev/tty
     read -r -s _p2 < /dev/tty || _p2=""; echo > /dev/tty
-    if [ "$_p1" = "$_p2" ]; then ADMIN_PASS="$_p1"; break; fi
-    echo "   两次密码不一致，请重输" > /dev/tty
+    if [ "$_p1" != "$_p2" ]; then
+      echo "   两次密码不一致，请重输" > /dev/tty
+      continue
+    fi
+    # 后端 createUser 的硬性密码策略：含字母+数字、至少 6 位，不合规会被拒并导致建号失败
+    if [ "${#_p1}" -lt 6 ] || ! printf '%s' "$_p1" | grep -q '[A-Za-z]' || ! printf '%s' "$_p1" | grep -q '[0-9]'; then
+      echo "   密码太弱：后端要求含字母+数字、至少 6 位（纯字母/纯数字都不行），请重输" > /dev/tty
+      continue
+    fi
+    ADMIN_PASS="$_p1"; break
   done
   unset _p1 _p2
   ask "3) 面板监听端口" "$PORT" PORT
@@ -230,6 +238,7 @@ if [ -n "$ADMIN_PASS" ] && [ -z "${DAEDUI_SKIP_HEALTHCHECK:-}" ]; then
     | curl -s -m 10 "http://127.0.0.1:$PORT/graphql" -H 'Content-Type: application/json' -d @- || true)"
   unset _U _P PAYLOAD
   case "$RESP" in
+    *'too weak password'*)   ACCOUNT_NOTE="密码被后端拒绝（需含字母+数字、至少 6 位）：用合规密码重跑向导，或按 README 第 0 步手动建号" ;;
     *'a user already exists'*) ACCOUNT_NOTE="设备上已有账号，本次未改动（改密码：界面内修改，或终端 daed resetpass -c /etc/daed）" ;;
     *'"data":{"createUser"'*) ACCOUNT_NOTE="管理员账号已自动建好：$ADMIN_USER —— 打开界面直接登录" ;;
     *)                      ACCOUNT_NOTE="自动建号未成功（返回：${RESP:-无响应}），按 README 第 0 步手动建号" ;;
