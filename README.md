@@ -3,7 +3,7 @@
 给 [dae](https://github.com/daeuniverse/dae)（eBPF 透明代理）用的轻量面板，只做三件事：
 
 1. **导入订阅** —— 订阅链接写入配置的 `subscription` 段由 dae 自己拉取解析；面板同时解析一份用于展示节点名单。
-2. **自定义策略组** —— 自动模式：按订阅范围 + 节点名关键词筛选，`min_moving_avg` 延迟选优；可给组绑定域名关键词，命中域名的流量走该组。
+2. **自定义策略组** —— 自动模式：按订阅范围 + 节点名关键词筛选，`min_moving_avg` 延迟选优；可给组绑定域名关键词、geosite 分类（如 `category-cryptocurrency`、`category-emby`，来自 dae 自带 geosite.dat，共 1300+ 分类）、域名后缀列表、目标端口，命中的流量走该组。组卡带一键预设：加密货币（geosite 分类 + bitget/coinbase/mexc 等分类未收录的交易所域名补齐）、Emby（分类 + 8096/8920 端口，再把自己的 Emby 服务器域名加进域名列表）。
 3. **切换节点** —— 手动模式：选中的节点以固定 tag 写入 `node` 段，策略组 `filter: name(<tag>) + policy: fixed(0)` 精确引用。应用配置走 `dae validate` 校验 + 热重载，不中断现有连接。
 
 ## 设计原则
