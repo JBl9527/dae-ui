@@ -37,7 +37,7 @@ DAE_CONF_DIR = os.environ.get("DAEUI_CONF_DIR", "/etc/dae")
 DAE_BIN = os.environ.get("DAEUI_DAE_BIN", "/usr/bin/dae")
 PORT = int(os.environ.get("DAEUI_PORT", "9623"))
 
-PANEL_VERSION = "1.3.0"
+PANEL_VERSION = "1.4.0"
 
 SUBS_FILE = os.path.join(DATA_DIR, "subs.json")
 GROUPS_FILE = os.path.join(DATA_DIR, "groups.json")
