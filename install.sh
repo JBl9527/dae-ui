@@ -62,10 +62,19 @@ echo "== 下载官方 daed v${DAED_VERSION} =="
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 dl() {
-  curl -fL --retry 2 -m 600 -o "$TMP/$DEB" "$BASE/$DEB" \
-    || curl -fL --retry 2 -m 600 -o "$TMP/$DEB" "https://ghfast.top/$BASE/$DEB"
-  curl -fsSL --retry 2 -m 60 -o "$TMP/$DEB.dgst" "$BASE/$DEB.dgst" \
-    || curl -fsSL --retry 2 -m 60 -o "$TMP/$DEB.dgst" "https://ghfast.top/$BASE/$DEB.dgst" || true
+  # 国内家宽直连 GitHub 常被掐（连接挂起数分钟）：先 12 秒探活，不通直接走镜像，不在死路上耗。
+  local MIRROR="https://ghfast.top/"
+  local PREFIX=""
+  if curl -fsS -m 12 -o /dev/null https://github.com/ 2>/dev/null; then
+    echo "  GitHub 直连可用"
+  else
+    PREFIX="$MIRROR"
+    echo "  GitHub 直连不通，改走 ghfast 镜像"
+  fi
+  curl -fL --retry 2 -m 600 -o "$TMP/$DEB" "${PREFIX}$BASE/$DEB" \
+    || curl -fL --retry 2 -m 600 -o "$TMP/$DEB" "${MIRROR}$BASE/$DEB"
+  curl -fsSL --retry 2 -m 60 -o "$TMP/$DEB.dgst" "${PREFIX}$BASE/$DEB.dgst" \
+    || curl -fsSL --retry 2 -m 60 -o "$TMP/$DEB.dgst" "${MIRROR}$BASE/$DEB.dgst" || true
 }
 dl
 if [ -s "$TMP/$DEB.dgst" ]; then
