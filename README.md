@@ -22,10 +22,25 @@ cd dae-ui
 sudo bash install.sh
 ```
 
-- 适用 Debian / Ubuntu x86_64；重跑即升级/修复（幂等）。
+- 适用 Debian / Ubuntu **x86_64 与 arm64**（含斐讯 N1 等 armbian 盒子，见下节）；重跑即升级/修复（幂等）。
 - 若机器上装过 v1（自研面板 + 独立版 dae），install.sh 会自动停用并清理它们；
   v1 的 dae 配置目录会保留为 `/etc/dae.v1.bak`。
 - 装完打开 `http://<机器IP>:2023`，首次使用先创建管理员账号。
+
+## ARM / 斐讯 N1（armbian）
+
+- 官方 v2.1.1 提供 arm64 的 .deb，install.sh 按 `uname -m` 自动选包，流程与 x86 完全一致。
+- **装之前先在盒子上验内核**（dae 2.x 的硬要求，不满足会在启动时直接报错）：
+
+  ```bash
+  uname -r                      # 需要 ≥ 5.17（路由用 bpf_loop），建议直接 6.x
+  ls /sys/kernel/btf/vmlinux    # 必须存在（CO-RE 加载 eBPF 需要 BTF）
+  ```
+
+  两条都过才跑 install.sh（脚本里有同样的硬预检，不过会终止并说明原因；
+  个别内核有回移补丁、确认能用的可 `DAEDUI_FORCE=1 sudo -E bash install.sh` 跳过）。
+- N1 是 S905D（arm64）+ 2GB 内存，跑 daed 足够；首次启动加载 eBPF 会比 x86 稍慢，看门狗已留 2 分钟宽限。
+- armbian 上网卡名一般是 `eth0`，`global` 配置里 `lan_interface` 按实际填（`ip -br a` 看）。
 
 ## 首次设置清单
 
