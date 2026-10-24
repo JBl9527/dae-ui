@@ -53,8 +53,17 @@ DEFAULT_EXCLUDES = ["剩余", "到期", "过期", "官网", "流量", "ExpireAt"
 DEFAULT_GROUP = {
     "id": "proxy", "name": "默认组", "mode": "auto",
     "subs": [], "include": [], "exclude": list(DEFAULT_EXCLUDES),
-    "domains": [], "node": None,
+    "domains": [], "geosites": [], "suffixes": [], "ports": [], "node": None,
 }
+
+
+def clean_domain(x):
+    d = str(x).strip().lower()
+    d = re.sub(r"^https?://", "", d)
+    d = d.split("/")[0].split(":")[0].strip(".")
+    if d.startswith("*."):
+        d = d[2:]
+    return d if re.match(r"^[a-z0-9_\-]+(\.[a-z0-9_\-]+)+$", d) else ""
 
 
 # ---------------------------------------------------------------- storage
@@ -273,10 +282,18 @@ def generate_configs():
     for g in groups:
         if g["id"] == "proxy":
             continue
+        gn = group_conf_name(g)
+        for cat in g.get("geosites") or []:
+            out.append("    domain(geosite:%s) -> %s" % (cat, gn))
+        for d in g.get("suffixes") or []:
+            out.append("    domain(suffix: %s) -> %s" % (q(d), gn))
         for d in g.get("domains") or []:
             d = str(d).strip()
             if d:
-                out.append("    domain(keyword: %s) -> %s" % (q(d), group_conf_name(g)))
+                out.append("    domain(keyword: %s) -> %s" % (q(d), gn))
+        ports = g.get("ports") or []
+        if ports:
+            out.append("    dport(%s) -> %s" % (", ".join(str(p) for p in ports), gn))
     out.append("    dip(geoip:cn) -> direct")
     out.append("    domain(geosite:cn) -> direct")
     out.append("    fallback: proxy")
@@ -422,6 +439,11 @@ def sanitize_state(payload):
             "include": [str(x).strip() for x in (g.get("include") or []) if str(x).strip()],
             "exclude": [str(x).strip() for x in (g.get("exclude") or []) if str(x).strip()],
             "domains": [str(x).strip() for x in (g.get("domains") or []) if str(x).strip()],
+            "geosites": [str(x).strip().lower() for x in (g.get("geosites") or [])
+                         if re.match(r"^[A-Za-z0-9_.\-]+$", str(x).strip())],
+            "suffixes": [d for d in (clean_domain(x) for x in (g.get("suffixes") or [])) if d],
+            "ports": sorted({int(p) for p in (g.get("ports") or [])
+                             if str(p).strip().isdigit() and 1 <= int(p) <= 65535}),
             "node": node,
         })
     if not any(g["id"] == "proxy" for g in groups):
