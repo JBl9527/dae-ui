@@ -238,6 +238,8 @@ unset ADMIN_PASS _p1 _p2 2>/dev/null || true
 echo
 echo "安装完成：$(daed -v 2>/dev/null || echo daed)"
 echo "  管理界面：http://${IP:-<本机IP>}:$PORT"
+echo "  注意：daed 运行时会接管本机 DNS；界面里配好订阅与 DNS 之前，本机域名解析可能暂时不可用"
+echo "        （用 IP 开界面不受影响；需要先上网拉代码时先 systemctl stop daed）"
 if [ -n "$ACCOUNT_NOTE" ]; then
   echo "  $ACCOUNT_NOTE"
 fi
