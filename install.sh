@@ -1,11 +1,15 @@
 #!/bin/bash
-# dae-ui installer (x86_64, systemd based distros: Ubuntu / Debian / armbian-x86)
-# Installs: official dae binary (pinned) + geo data + dae-ui panel.
+# dae-ui v2 —— 官方 daed 增强部署（不再使用自研面板）
+# 内容：官方 daed 2.1.1（内嵌 dae 内核 2.1.1 + 官方新版 UI）+ 稳定性硬化
+#   1) systemd drop-in：Restart=always（官方 on-abnormal 不覆盖 panic 退出与假死）
+#   2) 看门狗 timer：每分钟探活 daed 的 HTTP，连续 2 次无响应自动重启（治“假死”）
+# 适用：Debian / Ubuntu x86_64，root 运行。
 set -e
+cd "$(dirname "$0")"
 
-DAE_VERSION="${DAE_VERSION:-v2.1.1}"
-PANEL_DIR=/usr/local/dae-ui
-PANEL_PORT="${DAEUI_PORT:-9623}"
+DAED_VERSION="2.1.1"
+DEB="installer-daed-linux-x86_64.deb"
+BASE="https://github.com/daeuniverse/daed/releases/download/v${DAED_VERSION}"
 
 if [ "$(id -u)" != "0" ]; then
   echo "请用 root 运行：sudo bash install.sh" >&2; exit 1
@@ -14,58 +18,84 @@ ARCH="$(uname -m)"
 if [ "$ARCH" != "x86_64" ]; then
   echo "当前版本仅支持 x86_64，你的架构是 $ARCH" >&2; exit 1
 fi
-command -v python3 >/dev/null || { echo "需要 python3" >&2; exit 1; }
-command -v systemctl >/dev/null || { echo "需要 systemd" >&2; exit 1; }
+for cmd in curl systemctl dpkg sha256sum; do
+  command -v "$cmd" >/dev/null || { echo "缺少命令：$cmd" >&2; exit 1; }
+done
 
 echo "== 内核 eBPF 预检 =="
-WARN=0
 if [ ! -f /sys/kernel/btf/vmlinux ]; then
-  echo "  [警告] 未发现内核 BTF (/sys/kernel/btf/vmlinux)，dae 可能无法启动"
-  WARN=1
-fi
-if [ -r /proc/config.gz ]; then
-  for opt in CONFIG_BPF CONFIG_BPF_SYSCALL CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF CONFIG_BPF_JIT; do
-    if ! zcat /proc/config.gz | grep -q "^$opt=y"; then
-      echo "  [警告] 内核选项 $opt 未开启，dae 可能无法启动"; WARN=1
-    fi
-  done
-fi
-[ "$WARN" = "0" ] && echo "  内核预检通过"
-
-echo "== 安装 dae $DAE_VERSION =="
-if [ -x /usr/bin/dae ] && /usr/bin/dae --version 2>/dev/null | grep -q "${DAE_VERSION#v}"; then
-  echo "  已安装同版本，跳过下载"
+  echo "  [警告] 未发现内核 BTF (/sys/kernel/btf/vmlinux)，dae 内核可能无法启动"
 else
-  PKG="dae-linux-x86_64.tar.xz"
-  URL="https://github.com/daeuniverse/dae/releases/download/${DAE_VERSION}/${PKG}"
-  TMP="$(mktemp -d)"
-  echo "  下载 $URL"
-  if ! curl -fL --retry 2 -o "$TMP/$PKG" "$URL"; then
-    echo "  GitHub 直连失败，尝试镜像…"
-    curl -fL --retry 2 -o "$TMP/$PKG" "https://ghfast.top/${URL}"
-  fi
-  # tar 包是文件系统覆盖结构：usr/bin/dae、usr/share/dae/*.dat、etc/dae/example.dae、dae.service
-  tar -xJf "$TMP/$PKG" -C /
-  rm -rf "$TMP"
-  systemctl daemon-reload
-  echo "  dae 已安装：$(/usr/bin/dae --version 2>/dev/null | head -1)"
+  echo "  内核预检通过"
 fi
-# dae 服务不设开机自启：首次在面板里加好订阅、点“应用配置”后再启动，避免空配置启动失败
-systemctl disable dae >/dev/null 2>&1 || true
 
-echo "== 安装 dae-ui 面板 =="
-mkdir -p "$PANEL_DIR/data" "$PANEL_DIR/static"
-cp -f app.py "$PANEL_DIR/app.py"
-cp -f static/index.html "$PANEL_DIR/static/index.html"
-cp -f dae-ui.service /etc/systemd/system/dae-ui.service
+echo "== 清理旧组件（v1 自研面板 / 独立版 dae，如有） =="
+systemctl disable --now dae-ui >/dev/null 2>&1 || true
+systemctl disable --now dae >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/dae-ui.service /usr/lib/systemd/system/dae.service /usr/bin/dae
+rm -rf /usr/local/dae-ui /usr/share/dae
+# /etc/dae 是 v1 独立版 dae 的配置，daed 不用它；保留备份以防反悔
+if [ -d /etc/dae ] && [ ! -d /etc/dae.v1.bak ]; then mv /etc/dae /etc/dae.v1.bak; fi
+
+echo "== 下载官方 daed v${DAED_VERSION} =="
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+dl() {
+  curl -fL --retry 2 -m 600 -o "$TMP/$DEB" "$BASE/$DEB" \
+    || curl -fL --retry 2 -m 600 -o "$TMP/$DEB" "https://ghfast.top/$BASE/$DEB"
+  curl -fsSL --retry 2 -m 60 -o "$TMP/$DEB.dgst" "$BASE/$DEB.dgst" \
+    || curl -fsSL --retry 2 -m 60 -o "$TMP/$DEB.dgst" "https://ghfast.top/$BASE/$DEB.dgst" || true
+}
+dl
+if [ -s "$TMP/$DEB.dgst" ]; then
+  EXPECT="$(awk '$3=="sha256"{print $1}' "$TMP/$DEB.dgst")"
+  ACTUAL="$(sha256sum "$TMP/$DEB" | awk '{print $1}')"
+  if [ -n "$EXPECT" ] && [ "$EXPECT" = "$ACTUAL" ]; then
+    echo "  sha256 校验通过"
+  else
+    echo "  [错误] sha256 校验失败：期望 $EXPECT，实际 $ACTUAL" >&2; exit 1
+  fi
+else
+  echo "  [警告] 未取到官方 .dgst，跳过完整性校验"
+fi
+
+echo "== 安装 daed =="
+dpkg -i "$TMP/$DEB" || apt-get install -f -y
+mkdir -p /etc/daed
+
+echo "== 写入稳定性硬化 =="
+mkdir -p /etc/systemd/system/daed.service.d
+cp -f files/10-hardening.conf /etc/systemd/system/daed.service.d/10-hardening.conf
+cp -f files/daed-watchdog.sh /usr/local/bin/daed-watchdog.sh
+chmod +x /usr/local/bin/daed-watchdog.sh
+cp -f files/daed-watchdog.service /etc/systemd/system/daed-watchdog.service
+cp -f files/daed-watchdog.timer /etc/systemd/system/daed-watchdog.timer
 systemctl daemon-reload
-systemctl enable dae-ui >/dev/null 2>&1 || true
-systemctl restart dae-ui
+systemctl enable --now daed-watchdog.timer
+systemctl enable daed >/dev/null 2>&1 || true
+systemctl restart daed
 
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+if [ -z "${DAEDUI_SKIP_HEALTHCHECK:-}" ]; then
+  echo "== 等待 daed 就绪（最多 30 秒） =="
+  OK=0
+  for i in $(seq 1 30); do
+    if curl -fsS -m 3 -o /dev/null http://127.0.0.1:2023/; then OK=1; break; fi
+    sleep 1
+  done
+  if [ "$OK" != "1" ]; then
+    echo "[错误] daed 未在 30 秒内就绪，状态如下：" >&2
+    systemctl status daed --no-pager -n 5 >&2 || true
+    echo "看日志：journalctl -u daed -n 50 --no-pager" >&2
+    exit 1
+  fi
+fi
+
 echo
-echo "安装完成。"
-echo "  面板地址：http://${IP:-<本机IP>}:${PANEL_PORT}"
-echo "  使用顺序：添加订阅 → 拉取 → 配置策略组 → 保存并应用配置 → 启动 dae"
-echo "  旁路网关模式：在面板里填 LAN 网卡名（如 eth0），局域网设备网关指向本机 IP"
-echo "  注意：面板无登录鉴权，不要暴露到公网"
+echo "安装完成：$(daed -v 2>/dev/null || echo daed)"
+echo "  管理界面：http://${IP:-<本机IP>}:2023"
+echo "  接下来（详见 README）："
+echo "    1) 打开界面，首次使用先创建管理员账号"
+echo "    2) 导入订阅 → 在 Orchestrate 里编排策略组"
+echo "    3) 按 README 把 DNS 改成 TCP 版（重要，治断流）"
+echo "    4) 旁路模式：在 global 配置里填 lan_interface（如 ens18），设备网关/DNS 指向本机"
