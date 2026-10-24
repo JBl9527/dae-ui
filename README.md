@@ -26,6 +26,8 @@ sudo bash install.sh
 - 若机器上装过 v1（自研面板 + 独立版 dae），install.sh 会自动停用并清理它们；
   v1 的 dae 配置目录会保留为 `/etc/dae.v1.bak`。
 - 装完打开 `http://<机器IP>:2023`。
+- ⚠️ daed 启动后会接管本机 DNS：完成界面配置（导入订阅 + 下面的 DNS 设置）之前，
+  本机跑 git/curl 会报 `Could not resolve host`，属正常现象；需要先拉代码时先 `systemctl stop daed`，装完再配界面即可。
 
 **安装向导**：在终端里运行时会先依次询问（回车即默认值）——
 ① 面板管理员用户名（默认 admin）② 面板管理员密码（留空 = 装后手动建号）
