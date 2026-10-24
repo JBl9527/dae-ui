@@ -133,22 +133,25 @@ echo "== 下载官方 daed v${DAED_VERSION} =="
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 dl() {
-  # 国内家宽直连 GitHub 常被掐（连接挂起数分钟）：auto 模式先 12 秒探活，不通直接走镜像。
+  # 国内家宽连 GitHub 有两种死法：连不上、或连得上但龟速（资源 CDN 只有几十 KB/s）。
+  # 对策：auto 先对“真正的 .deb 地址”做 1 字节探活；下载带断点续传（-C -），
+  # 直连若持续低于 ~40KB/s 就中止并换镜像续传，而不是从零重下、干等超时。
   local MIRROR="https://ghfast.top/"
   local PREFIX=""
   case "$ROUTE" in
     mirror) PREFIX="$MIRROR"; echo "  使用 ghfast 镜像（安装选项）" ;;
     direct) echo "  使用 GitHub 直连（安装选项）" ;;
     *)
-      if curl -fsS -m 12 -o /dev/null https://github.com/ 2>/dev/null; then
+      if curl -fsSL -m 12 -o /dev/null -r 0-0 "$BASE/$DEB" 2>/dev/null; then
         echo "  GitHub 直连可用"
       else
         PREFIX="$MIRROR"
         echo "  GitHub 直连不通，改走 ghfast 镜像"
       fi ;;
   esac
-  curl -fL --retry 2 -m 600 -o "$TMP/$DEB" "${PREFIX}$BASE/$DEB" \
-    || curl -fL --retry 2 -m 600 -o "$TMP/$DEB" "${MIRROR}$BASE/$DEB"
+  curl -fL -C - --retry 2 --speed-limit 40960 --speed-time 30 -m 1200 -o "$TMP/$DEB" "${PREFIX}$BASE/$DEB" \
+    || curl -fL -C - --retry 2 -m 1200 -o "$TMP/$DEB" "${MIRROR}$BASE/$DEB" \
+    || { rm -f "$TMP/$DEB"; curl -fL --retry 2 -m 1200 -o "$TMP/$DEB" "${MIRROR}$BASE/$DEB"; }
   curl -fsSL --retry 2 -m 60 -o "$TMP/$DEB.dgst" "${PREFIX}$BASE/$DEB.dgst" \
     || curl -fsSL --retry 2 -m 60 -o "$TMP/$DEB.dgst" "${MIRROR}$BASE/$DEB.dgst" || true
 }
