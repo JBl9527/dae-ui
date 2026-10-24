@@ -37,7 +37,7 @@ DAE_CONF_DIR = os.environ.get("DAEUI_CONF_DIR", "/etc/dae")
 DAE_BIN = os.environ.get("DAEUI_DAE_BIN", "/usr/bin/dae")
 PORT = int(os.environ.get("DAEUI_PORT", "9623"))
 
-PANEL_VERSION = "1.4.0"
+PANEL_VERSION = "1.5.0"
 
 SUBS_FILE = os.path.join(DATA_DIR, "subs.json")
 GROUPS_FILE = os.path.join(DATA_DIR, "groups.json")
@@ -53,7 +53,7 @@ TAG_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
 DEFAULT_EXCLUDES = ["剩余", "到期", "过期", "官网", "流量", "ExpireAt", "Traffic", "RESET"]
 
 DEFAULT_GROUP = {
-    "id": "proxy", "name": "默认组", "mode": "auto",
+    "id": "proxy", "name": "默认组", "mode": "auto", "kind": "proxy",
     "subs": [], "include": [], "exclude": list(DEFAULT_EXCLUDES),
     "domains": [], "geosites": [], "suffixes": [], "ports": [], "node": None,
 }
@@ -273,7 +273,8 @@ def generate_configs():
     total_sources = len(subs)
     pins = {}  # tag -> link
     for g in groups:
-        if g.get("mode") == "manual" and g.get("node") and g["node"].get("link"):
+        if g.get("kind") != "direct" and g.get("mode") == "manual" \
+                and g.get("node") and g["node"].get("link"):
             pins[pin_tag(g)] = g["node"]["link"]
     if total_sources == 0 and not pins:
         return False, "还没有任何订阅或节点，先添加订阅。"
@@ -295,6 +296,8 @@ def generate_configs():
 
     out.append("group {")
     for g in groups:
+        if g.get("kind") == "direct":
+            continue
         name = group_conf_name(g)
         out.append("    %s {" % name)
         if g.get("mode") == "manual" and g["id"] in [x["id"] for x in groups] \
@@ -310,26 +313,34 @@ def generate_configs():
     out.append("}")
     out.append("")
 
+    def matcher_rules(g, target):
+        lines = []
+        for cat in g.get("geosites") or []:
+            lines.append("    domain(geosite:%s) -> %s" % (cat, target))
+        for d in g.get("suffixes") or []:
+            lines.append("    domain(suffix: %s) -> %s" % (q(d), target))
+        for d in g.get("domains") or []:
+            d = str(d).strip()
+            if d:
+                lines.append("    domain(keyword: %s) -> %s" % (q(d), target))
+        ports = g.get("ports") or []
+        if ports:
+            lines.append("    dport(%s) -> %s" % (", ".join(str(p) for p in ports), target))
+        return lines
+
     out.append("routing {")
     out.append("    pname(NetworkManager) -> direct")
     out.append("    dip(224.0.0.0/3, 'ff00::/8') -> direct")
     out.append("    dip(geoip:private) -> direct")
     out.append("    l4proto(udp) && dport(443) -> block")
+    # Direct groups first: an explicit direct rule wins over proxy groups.
     for g in groups:
-        if g["id"] == "proxy":
+        if g["id"] != "proxy" and g.get("kind") == "direct":
+            out.extend(matcher_rules(g, "direct"))
+    for g in groups:
+        if g["id"] == "proxy" or g.get("kind") == "direct":
             continue
-        gn = group_conf_name(g)
-        for cat in g.get("geosites") or []:
-            out.append("    domain(geosite:%s) -> %s" % (cat, gn))
-        for d in g.get("suffixes") or []:
-            out.append("    domain(suffix: %s) -> %s" % (q(d), gn))
-        for d in g.get("domains") or []:
-            d = str(d).strip()
-            if d:
-                out.append("    domain(keyword: %s) -> %s" % (q(d), gn))
-        ports = g.get("ports") or []
-        if ports:
-            out.append("    dport(%s) -> %s" % (", ".join(str(p) for p in ports), gn))
+        out.extend(matcher_rules(g, group_conf_name(g)))
     out.append("    dip(geoip:cn) -> direct")
     out.append("    domain(geosite:cn) -> direct")
     out.append("    fallback: proxy")
@@ -470,6 +481,7 @@ def sanitize_state(payload):
         groups.append({
             "id": gid,
             "name": str(g.get("name", "")).strip() or gid,
+            "kind": "direct" if (g.get("kind") == "direct" and gid != "proxy") else "proxy",
             "mode": "manual" if g.get("mode") == "manual" else "auto",
             "subs": [str(t) for t in (g.get("subs") or []) if TAG_RE.match(str(t))],
             "include": [str(x).strip() for x in (g.get("include") or []) if str(x).strip()],
