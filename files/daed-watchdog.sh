@@ -2,7 +2,7 @@
 # daed 看门狗（由 daed-watchdog.timer 每分钟调用）：
 # 只处理“进程还在、但 HTTP 连续无响应”的假死；进程真退出由 systemd 的 Restart=always 负责。
 STATE=/run/daed-watchdog.failcount
-URL=http://127.0.0.1:2023/
+URL=http://127.0.0.1:__PORT__/
 
 systemctl is-active --quiet daed || exit 0
 
