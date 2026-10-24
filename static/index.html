@@ -174,7 +174,7 @@ async function switchNode(i, v){
   msg("切换节点中…");
   const sv = await save();
   if (!sv.ok){ msg(sv.message || "保存失败", true); return; }
-  const r = await api("/api/apply");
+  const r = await api("/api/apply", {});
   msg(r.ok ? "✓ 已切换：" + g.name + (g.mode==="manual" && g.node ? " → " + g.node.name : " → 自动") + "（已热重载）"
            : "✗ " + (r.message || "应用失败") + (r.output ? "\n" + r.output : ""), !r.ok);
   const st = await api("/api/state"); S.dae = st.dae; render();
@@ -364,7 +364,7 @@ async function applyAll(){
   msg("保存并应用中…");
   const sv = await save();
   if (!sv.ok){ msg(sv.message||"保存失败", true); return; }
-  const r = await api("/api/apply");
+  const r = await api("/api/apply", {});
   if (r.ok) msg("✓ 已应用：" + (r.reloaded ? "dae 已热重载" : (r.message||"")));
   else msg("✗ " + (r.message||"应用失败") + (r.output ? "\n" + r.output : ""), true);
   const st = await api("/api/state"); S.dae = st.dae; render();
@@ -405,7 +405,7 @@ async function delSub(i){
 }
 async function refreshSubs(){
   msg("刷新全部订阅中…");
-  const r = await api("/api/refresh");
+  const r = await api("/api/refresh", {});
   S.nodes = r.nodes || {}; syncGroupNodes();
   msg(r.ok ? `✓ 共 ${r.total} 个节点` : "✗ 部分订阅失败：" + JSON.stringify(r.errors), !r.ok);
   render();
