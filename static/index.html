@@ -32,6 +32,10 @@
   .chip.on { background:var(--acc); border-color:var(--acc); color:#fff; }
   .geopick { max-height:132px; overflow:auto; border:1px solid var(--line); border-radius:6px; padding:6px 8px; margin-top:6px; background:#0d1319; }
   .geopick label { display:inline-flex; gap:4px; align-items:center; margin:3px 12px 3px 0; font-size:13px; cursor:pointer; }
+  .geobucket { border-bottom:1px dashed var(--line); padding:2px 0; }
+  .geobucket:last-child { border-bottom:none; }
+  .geobucket summary { cursor:pointer; padding:4px 0; font-size:14px; }
+  .geobucket > div { padding:2px 0 7px; }
 </style>
 </head>
 <body>
@@ -271,16 +275,41 @@ function geoToggle(i, cat, on){
   const el = document.getElementById("geoCount" + i);
   if (el) el.textContent = arr.length ? `已选 ${arr.length} 个` : "";
 }
+const GEO_BUCKETS = [
+  { name: "📺 流媒体", cats: ["youtube","netflix","disney","hbo","hulu","twitch","primevideo","abema","dazn","niconico","spotify","soundcloud","tidal","kkbox","vimeo","bahamut","category-emby","category-media"] },
+  { name: "🤖 AI", cats: ["openai","google-gemini","perplexity","huggingface","github-copilot","deepseek","doubao","category-ai-cn"] },
+  { name: "💰 加密货币", cats: ["category-cryptocurrency","binance","bybit","okx","gateio","huobi","kraken","kucoin"] },
+  { name: "🇨🇳 国内网站", cats: ["geolocation-cn","category-media-cn","bilibili","iqiyi","youku","acfun","baidu","zhihu","xiaohongshu","douyin","alibaba","tencent","netease","meituan","xiaomi","huawei","oppo","vivo","category-bank-cn","category-education-cn"] },
+  { name: "🍎 苹果", cats: ["apple","icloud","apple-music","apple-podcasts"] },
+  { name: "💬 社交", cats: ["telegram","twitter","facebook","whatsapp","discord","reddit","line","signal","meta","threads","linkedin","tiktok"] },
+  { name: "🎮 游戏", cats: ["steam","category-games","playstation","xbox","nintendo","roblox","riot","gog"] },
+  { name: "🛠 科技开发", cats: ["google","github","gitlab","docker","onedrive","microsoft-dev","amazon","cloudflare","adobe","nvidia","oracle","mozilla","notion","dropbox","category-dev"] },
+];
 function renderGeoPick(i, filter){
   const el = document.getElementById("geoPick" + i);
   if (!el) return;
   const cats = GEO_CATS.length ? GEO_CATS : GEO_FALLBACK;
+  const catSet = new Set(cats);
   const f = String(filter || "").trim().toLowerCase();
   const sel = new Set(S.groups[i].geosites || []);
-  const list = cats.filter(c => !f || c.includes(f)).slice(0, 400);
-  el.innerHTML = list.map(c =>
-    `<label><input type="checkbox" ${sel.has(c) ? "checked" : ""} onchange="geoToggle(${i},'${c}',this.checked)">${esc(c)}</label>`
-  ).join("") || '<span class="dim">没有匹配的分类</span>';
+  const box = c => `<label><input type="checkbox" ${sel.has(c) ? "checked" : ""} onchange="geoToggle(${i},'${c}',this.checked)">${esc(c)}</label>`;
+  if (f) {
+    const list = cats.filter(c => c.includes(f)).slice(0, 400);
+    el.innerHTML = list.map(box).join("") || '<span class="dim">没有匹配的分类</span>';
+  } else {
+    const used = new Set();
+    let h = "";
+    for (const b of GEO_BUCKETS) {
+      const list = b.cats.filter(c => catSet.has(c));
+      list.forEach(c => used.add(c));
+      if (!list.length) continue;
+      const selN = list.filter(c => sel.has(c)).length;
+      h += `<details class="geobucket"><summary>${b.name} <span class="dim">${list.length} 个${selN ? ` · 已选 ${selN}` : ""}</span></summary><div>${list.map(box).join("")}</div></details>`;
+    }
+    const rest = cats.filter(c => !used.has(c));
+    h += `<details class="geobucket"><summary>📚 全部其他 <span class="dim">${rest.length} 个（太多时用搜索）</span></summary><div>${rest.slice(0, 600).map(box).join("")}</div></details>`;
+    el.innerHTML = h;
+  }
   const cnt = document.getElementById("geoCount" + i);
   if (cnt) cnt.textContent = sel.size ? `已选 ${sel.size} 个` : "";
 }
