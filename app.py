@@ -37,6 +37,8 @@ DAE_CONF_DIR = os.environ.get("DAEUI_CONF_DIR", "/etc/dae")
 DAE_BIN = os.environ.get("DAEUI_DAE_BIN", "/usr/bin/dae")
 PORT = int(os.environ.get("DAEUI_PORT", "9623"))
 
+PANEL_VERSION = "1.3.0"
+
 SUBS_FILE = os.path.join(DATA_DIR, "subs.json")
 GROUPS_FILE = os.path.join(DATA_DIR, "groups.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
@@ -189,6 +191,40 @@ def refresh_subscriptions(tags=None):
         }
     _save(NODES_FILE, cache)
     return cache
+
+
+# ---------------------------------------------------------------- geosite categories
+_GEOSITE_CACHE = None
+
+
+def geosite_categories():
+    """Real category codes from the geosite.dat dae uses (uppercase codes in the file)."""
+    global _GEOSITE_CACHE
+    if _GEOSITE_CACHE is not None:
+        return _GEOSITE_CACHE
+    paths = [
+        os.environ.get("DAEUI_GEOSITE", ""),
+        "/usr/share/dae/geosite.dat",
+        "/usr/local/share/dae/geosite.dat",
+        os.path.join(DAE_CONF_DIR, "geosite.dat"),
+        os.path.normpath(os.path.join(os.path.dirname(DAE_BIN), "..", "share", "dae", "geosite.dat")),
+    ]
+    cats = []
+    for p in paths:
+        if p and os.path.isfile(p):
+            try:
+                with open(p, "rb") as f:
+                    data = f.read()
+                found = set()
+                for m in re.finditer(rb"(?<![A-Za-z0-9_\-])[A-Z][A-Z0-9_\-]{1,60}(?![A-Za-z0-9_\-])", data):
+                    found.add(m.group(0).decode().lower())
+                if len(found) > 100:
+                    cats = sorted(found)
+                    break
+            except Exception:
+                continue
+    _GEOSITE_CACHE = cats
+    return cats
 
 
 # ---------------------------------------------------------------- config generation
@@ -460,8 +496,12 @@ def sanitize_state(payload):
 class Handler(BaseHTTPRequestHandler):
     server_version = "dae-ui/1.0"
 
-    def log_message(self, fmt, *args):  # keep stdout quiet
-        pass
+    def log_message(self, fmt, *args):  # log API calls to journal, keep the rest quiet
+        try:
+            if "/api/" in (self.path or ""):
+                sys.stderr.write("dae-ui api: %s %s\n" % (self.command, self.path))
+        except Exception:
+            pass
 
     def _json(self, data, code=200):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -493,9 +533,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json({"ok": False, "message": str(e)}, 500)
             return
+        if path == "/api/geosite":
+            cats = geosite_categories()
+            self._json({"ok": bool(cats), "categories": cats, "count": len(cats)})
+            return
         if path == "/api/state":
             rc, ver = run_cmd([DAE_BIN, "--version"], timeout=10)
             self._json({
+                "panel_version": PANEL_VERSION,
                 "subs": load_subs(),
                 "groups": load_groups()["groups"],
                 "settings": load_settings(),
@@ -510,7 +555,7 @@ class Handler(BaseHTTPRequestHandler):
             rc, out = run_cmd(["journalctl", "-u", "dae", "-n", "120", "--no-pager"], timeout=15)
             self._json({"ok": rc == 0, "logs": out[-12000:]})
             return
-        self._json({"ok": False, "message": "not found"}, 404)
+        self._json({"ok": False, "message": "接口不存在: %s" % path}, 404)
 
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
@@ -565,7 +610,7 @@ class Handler(BaseHTTPRequestHandler):
             rc, out = run_cmd(["systemctl", action, "dae"], timeout=90)
             self._json({"ok": rc == 0, "active": dae_active(), "output": out[-1500:]})
             return
-        self._json({"ok": False, "message": "not found"}, 404)
+        self._json({"ok": False, "message": "接口不存在: %s" % path}, 404)
 
 
 def main():
