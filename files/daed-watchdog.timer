@@ -1,0 +1,11 @@
+[Unit]
+Description=Run daed watchdog every minute
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=60s
+AccuracySec=10s
+Unit=daed-watchdog.service
+
+[Install]
+WantedBy=timers.target
