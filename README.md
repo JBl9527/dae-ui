@@ -104,6 +104,12 @@ journalctl -t daed-watchdog           # 看门狗的探活/重启记录
 daed resetpass -c /etc/daed           # 忘记管理员密码时重置（会给随机密码）
 ```
 
+**排障：停掉 daed 后网络仍不通**（ping 通、TCP/UDP 全死、`Could not resolve host`）——
+多半是 daed 被强杀后，它挂在网卡上的 TC eBPF 程序残留成了孤儿（`tc filter show dev eth0 ingress`
+能看到 `daed_` 开头的 filter，进程已死、无人处理被 tproxy 的流量）。手动清：
+`tc qdisc del dev eth0 clsact`（网卡名按实际）。看门狗已内置自动清理：daed 未运行时，
+每分钟检查并摘除这类残留。
+
 ## 卸载
 
 ```bash
