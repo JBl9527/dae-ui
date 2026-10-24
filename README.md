@@ -1,25 +1,20 @@
-# dae-ui
+# dae-ui v2 —— 官方 daed 增强部署
 
-给 [dae](https://github.com/daeuniverse/dae)（eBPF 透明代理）用的轻量面板，只做三件事：
+> v2 起本项目不再自研面板，改为部署**官方 daed**（daeuniverse/daed），
+> 专治老版本 daed 用一段时间后“莫名断流 / 进程掉线”的问题。
 
-1. **导入订阅** —— 订阅链接写入配置的 `subscription` 段由 dae 自己拉取解析；面板同时解析一份用于展示节点名单。
-2. **自定义策略组** —— 尽量点选、少打字：节点筛选是地区点选（香港/台湾/日本/美国…点一下就选中该地区全部节点，也可加自定义关键词）；流量绑定支持域名关键词、**geosite 分类点选**（按流媒体/AI/加密货币/苹果/社交/游戏/科技八个主题桶陈列，也可搜索 dae 自带 geosite.dat 的全部分类；国内分类不显示，因为国内 IP/域名已默认直连）、域名后缀列表（没有现成分类时用）、目标端口。组分两种：**代理组**（走节点）和**直连组**（不选节点，把自己的域名加进域名后缀即可直连，直连规则优先于所有代理组）。组卡带一键预设：加密货币、Emby。
-3. **切换节点** —— 手动模式：选中的节点以固定 tag 写入 `node` 段，策略组 `filter: name(<tag>) + policy: fixed(0)` 精确引用。应用配置走 `dae validate` 校验 + 热重载，不中断现有连接。
+## 组成
 
-## 设计原则
+| 组件 | 说明 |
+|---|---|
+| 官方 daed **v2.1.1** | 内嵌 dae 内核 v2.1.1（最新）+ 官方新版 Web UI，官方 .deb 安装，sha256 对照官方 .dgst 校验 |
+| systemd 硬化 drop-in | 官方 unit 的 `Restart=on-abnormal` 不覆盖 panic 非零退出与进程假死 → 改 `Restart=always` |
+| 看门狗 timer | 每分钟探活 `http://127.0.0.1:2023`，连续 2 次无响应（约 2 分钟）自动重启 daed，记录在 journal（tag `daed-watchdog`） |
 
-面板与 dae 是**两个独立进程**（这是 daed 的教训：核心、Web、数据库塞一个进程，在小内存设备上进程一挂流量就失控）。面板只负责生成配置、校验、触发重载；面板自身崩溃不影响 dae 转发。dae 由官方 systemd 单元托管（Restart=on-abnormal）。
+新版 UI 原生自带：**流量显示**（Orchestrate 页的 Traffic Overview）、**节点延迟检测**（节点列表处），
+策略组编排、订阅管理都在同一界面里。
 
-生成配置布局：
-
-```
-/etc/dae/config.dae          入口：include + global + dns
-/etc/dae/config.d/panel.dae  subscription / node / group / routing
-```
-
-默认分流：私有地址直连、组播直连、UDP 443（QUIC）拦截、国内 IP/域名（geoip:cn / geosite:cn）直连，其余走默认策略组；DNS 国内走阿里、国外走 Google 并带响应防污染规则。
-
-## 安装（x86_64，Ubuntu/Debian/armbian-x86 等 systemd 发行版）
+## 安装
 
 ```bash
 git clone https://github.com/JBl9527/dae-ui.git
@@ -27,22 +22,64 @@ cd dae-ui
 sudo bash install.sh
 ```
 
-安装脚本会：检查内核 eBPF 条件（BTF 等）→ 安装官方 dae v2.1.1 发布包（含二进制、geoip/geosite 数据、官方 systemd 单元）→ 安装面板到 `/usr/local/dae-ui` 并启动（端口 9623）。
+- 适用 Debian / Ubuntu x86_64；重跑即升级/修复（幂等）。
+- 若机器上装过 v1（自研面板 + 独立版 dae），install.sh 会自动停用并清理它们；
+  v1 的 dae 配置目录会保留为 `/etc/dae.v1.bak`。
+- 装完打开 `http://<机器IP>:2023`，首次使用先创建管理员账号。
 
-面板数据（订阅/策略组/设置）保存在 `/usr/local/dae-ui/data/`，与程序分离。
+## 首次设置清单
 
-## 使用
+1. **导入订阅**：在界面里添加你的订阅链接，等待节点拉取完成。
+2. **编排策略组**：在 Orchestrate 页建组、选节点（可先测延迟再选）。
+3. **⚠️ 必改 DNS（治断流的关键）**：把配置里的 `dns` 段改成下面这样——
+   国外 DNS 只走 TCP 且用纯 IPv4 地址。原因：机场类节点池普遍不支持 UDP 中继，
+   默认的 UDP/双栈 DNS 经节点转发会间歇性卡死，表现就是“莫名断流”；
+   另外 `dns.google` 这个名字会解析出 IPv6 目标，很多节点没有 IPv6 出口，同样卡。
 
-打开 `http://<机器IP>:9623`：
+   ```
+   dns {
+       upstream {
+           alidns: 'udp://dns.alidns.com:53'
+           googledns: 'tcp://8.8.8.8:53'
+       }
+       routing {
+           request {
+               qname(geosite:cn) -> alidns
+               fallback: googledns
+           }
+           response {
+               upstream(googledns) -> accept
+               ip(geoip:private) && !qname(geosite:cn) -> googledns
+               fallback: accept
+           }
+       }
+   }
+   ```
 
-1. 添加订阅（标签仅英文/数字/下划线）→ 拉取节点；
-2. 在策略组里选自动/手动、筛节点或固定节点；自定义组可填域名关键词；
-3. 点「保存并应用配置」→ 再点「启动」dae；
-4. 旁路网关模式：在面板填 LAN 网卡名（如 `eth0`），局域网设备把网关指向本机 IP。只代理本机则留空。
+4. **旁路网关模式**：在 `global` 配置里填 `lan_interface`（如 `ens18`），
+   局域网设备的网关和 DNS 都指向这台机器的 IP。
 
-## 注意
+## 运维
 
-- 面板**无登录鉴权**，仅限局域网使用，不要暴露公网。
-- 订阅仅支持链接列表 / Base64 格式（机场的通用/v2ray 格式），不支持 Clash YAML 订阅。
-- dae 对内核有 eBPF 相关要求，PVE 里请给虚拟机用较新的 Ubuntu/Debian 官方内核；启动失败先看面板里的 dae 日志。
-- 当前仅 x86_64。dae 本体为 AGPL-3.0，本面板仅通过配置文件与命令行管理 dae，不链接其代码。
+```bash
+systemctl status daed                 # 服务状态
+journalctl -u daed -f                 # daed 日志
+journalctl -t daed-watchdog           # 看门狗的探活/重启记录
+daed resetpass -c /etc/daed           # 忘记管理员密码时重置（会给随机密码）
+```
+
+## 卸载
+
+```bash
+sudo systemctl disable --now daed daed-watchdog.timer
+sudo dpkg -r daed
+sudo rm -rf /etc/systemd/system/daed.service.d /etc/systemd/system/daed-watchdog.* \
+            /usr/local/bin/daed-watchdog.sh /etc/daed
+sudo systemctl daemon-reload
+```
+
+## 版本说明
+
+- 内核与 UI 均锁定官方 **v2.1.1**（dae / daed 同步发布）。升级时改 `install.sh` 里的
+  `DAED_VERSION` 后重跑即可。
+- v1 的自研面板代码已从本仓库移除（git 历史里仍可找回）。
