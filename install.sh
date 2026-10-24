@@ -3,30 +3,51 @@
 # 内容：官方 daed 2.1.1（内嵌 dae 内核 2.1.1 + 官方新版 UI）+ 稳定性硬化
 #   1) systemd drop-in：Restart=always（官方 on-abnormal 不覆盖 panic 退出与假死）
 #   2) 看门狗 timer：每分钟探活 daed 的 HTTP，连续 2 次无响应自动重启（治“假死”）
-# 适用：Debian / Ubuntu x86_64，root 运行。
+# 适用：Debian / Ubuntu，x86_64 与 arm64（斐讯 N1 等 armbian 盒子），root 运行。
 set -e
 cd "$(dirname "$0")"
 
 DAED_VERSION="2.1.1"
-DEB="installer-daed-linux-x86_64.deb"
 BASE="https://github.com/daeuniverse/daed/releases/download/v${DAED_VERSION}"
 
 if [ "$(id -u)" != "0" ]; then
   echo "请用 root 运行：sudo bash install.sh" >&2; exit 1
 fi
-ARCH="$(uname -m)"
-if [ "$ARCH" != "x86_64" ]; then
-  echo "当前版本仅支持 x86_64，你的架构是 $ARCH" >&2; exit 1
-fi
+case "$(uname -m)" in
+  x86_64)  DEB="installer-daed-linux-x86_64.deb" ;;
+  aarch64) DEB="installer-daed-linux-arm64.deb" ;;
+  *) echo "暂不支持的架构：$(uname -m)（官方 v${DAED_VERSION} 的 .deb 只有 x86_64 与 arm64）" >&2; exit 1 ;;
+esac
 for cmd in curl systemctl dpkg sha256sum; do
   command -v "$cmd" >/dev/null || { echo "缺少命令：$cmd" >&2; exit 1; }
 done
 
 echo "== 内核 eBPF 预检 =="
+# dae 2.x 路由依赖 bpf_loop（内核 ≥5.17）与 vmlinux BTF（CO-RE 加载），缺一必启动失败。
+# 个别发行版内核有回移补丁，确认没问题可用 DAEDUI_FORCE=1 跳过预检。
+KREL="$(uname -r)"
+KMAJ="$(echo "$KREL" | cut -d. -f1 | tr -cd '0-9')"
+KMIN="$(echo "$KREL" | cut -d. -f2 | tr -cd '0-9')"
+PREFAIL=0
+if [ "${KMAJ:-0}" -lt 5 ] || { [ "${KMAJ:-0}" -eq 5 ] && [ "${KMIN:-0}" -lt 17 ]; }; then
+  echo "  [错误] 内核 $KREL 低于 5.17：dae 2.x 需要 bpf_loop，低版本会直接启动失败。" >&2
+  echo "         armbian/斐讯 N1 请先升级到 6.x 内核（如 ophub 内核）再重跑本脚本。" >&2
+  PREFAIL=1
+fi
 if [ ! -f /sys/kernel/btf/vmlinux ]; then
-  echo "  [警告] 未发现内核 BTF (/sys/kernel/btf/vmlinux)，dae 内核可能无法启动"
+  echo "  [错误] 未发现内核 BTF（/sys/kernel/btf/vmlinux 不存在）：dae 用 CO-RE 加载 eBPF，缺 BTF 无法启动。" >&2
+  echo "         请换带 CONFIG_DEBUG_INFO_BTF 的内核（6.x 主线/armbian 官方内核一般自带）。" >&2
+  PREFAIL=1
+fi
+if [ "$PREFAIL" = "1" ]; then
+  if [ -n "${DAEDUI_FORCE:-}" ]; then
+    echo "  DAEDUI_FORCE 已设置，跳过预检继续（风险自负）"
+  else
+    echo "  预检未通过，终止安装。确认内核有回移补丁可重跑：DAEDUI_FORCE=1 sudo -E bash install.sh" >&2
+    exit 1
+  fi
 else
-  echo "  内核预检通过"
+  echo "  内核预检通过（$KREL，BTF 存在）"
 fi
 
 echo "== 清理旧组件（v1 自研面板 / 独立版 dae，如有） =="
