@@ -56,7 +56,8 @@ sudo bash install.sh
 
 0. **⚠️ 先建管理员账号（新版 UI 的坑）**：全新安装还没有任何账号，但向导第 2 步直接让你
    “登录”，输什么都会报 `incorrect username or password`。先在装机终端手动建第一个账号
-   （把密码换成你自己的），返回一长串 token 即成功，然后回界面用同样的账号密码登录：
+   （把密码换成你自己的——后端密码策略：**必须含字母+数字、至少 6 位**，纯字母/纯数字会被拒并返回 `too weak password`），
+   返回一长串 token 即成功，然后回界面用同样的账号密码登录：
 
    ```bash
    curl -s http://127.0.0.1:2023/graphql -H 'Content-Type: application/json' \
