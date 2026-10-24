@@ -140,15 +140,18 @@ function renderSwitch(){
     if (g.kind === "direct") return "";
     let opts = `<option value=""${g.mode==="auto"?" selected":""}>自动（延迟最优）</option>`;
     let found = g.mode !== "manual";
+    const pool = groupNodePool(g);
     for (const s of S.subs){
-      const c = S.nodes[s.tag];
-      if (!c || !c.nodes || !c.nodes.length) continue;
-      opts += `<optgroup label="${esc(s.tag)}">` + c.nodes.map((n,j)=>{
-        const sel = g.mode==="manual" && g.node && g.node.sub===s.tag && g.node.name===n.name;
+      const items = pool.filter(p => p.sub === s.tag);
+      if (!items.length) continue;
+      opts += `<optgroup label="${esc(s.tag)}">` + items.map(p => {
+        const sel = g.mode==="manual" && g.node && g.node.sub===p.sub && g.node.name===p.name;
         if (sel) found = true;
-        return `<option value="${esc(s.tag)}|${j}"${sel?" selected":""}>${esc(n.name)} (${esc(n.proto)})</option>`;
+        return `<option value="${esc(p.sub)}|${p.idx}"${sel?" selected":""}>${esc(p.name)} (${esc(p.proto)})</option>`;
       }).join("") + "</optgroup>";
     }
+    if (!pool.length)
+      opts += `<option value="" disabled>（该组筛选后没有节点，去组里调整「节点名包含」）</option>`;
     if (g.mode==="manual" && g.node && !found)
       opts += `<option value="keep" selected>${esc(g.node.name)}（当前固定）</option>`;
     return `<div class="row" style="margin:7px 0">
@@ -180,14 +183,32 @@ async function switchNode(i, v){
   const st = await api("/api/state"); S.dae = st.dae; render();
 }
 
-function nodeOptions(g){
-  let h = '<option value="">（选择节点）</option>';
+/* 一个组的节点范围：订阅范围 + 节点名包含（含才入围） + 节点名排除（命中剔除） */
+function groupNodePool(g){
+  const inc = g.include || [], exc = g.exclude || [], out = [];
   for (const s of S.subs){
+    if ((g.subs || []).length && !g.subs.includes(s.tag)) continue;
     const c = S.nodes[s.tag];
-    if (!c || !c.nodes || !c.nodes.length) continue;
-    h += `<optgroup label="${esc(s.tag)}">` + c.nodes.map((n,j)=>{
-      const sel = g.node && g.node.sub===s.tag && g.node.name===n.name ? " selected" : "";
-      return `<option value="${esc(s.tag)}|${j}"${sel}>${esc(n.name)} (${esc(n.proto)})</option>`;
+    if (!c || !c.nodes) continue;
+    c.nodes.forEach((n, j)=>{
+      if (inc.length && !inc.some(k => n.name.includes(k))) return;
+      if (exc.some(k => n.name.includes(k))) return;
+      out.push({ sub: s.tag, idx: j, name: n.name, proto: n.proto });
+    });
+  }
+  return out;
+}
+
+function nodeOptions(g){
+  const pool = groupNodePool(g);
+  let h = '<option value="">（选择节点）</option>';
+  if (!pool.length) return h + '<option value="" disabled>按该组的「节点名包含」筛选后没有节点</option>';
+  for (const s of S.subs){
+    const items = pool.filter(p => p.sub === s.tag);
+    if (!items.length) continue;
+    h += `<optgroup label="${esc(s.tag)}">` + items.map(p => {
+      const sel = g.node && g.node.sub === p.sub && g.node.name === p.name ? " selected" : "";
+      return `<option value="${esc(p.sub)}|${p.idx}"${sel}>${esc(p.name)} (${esc(p.proto)})</option>`;
     }).join("") + "</optgroup>";
   }
   return h;
