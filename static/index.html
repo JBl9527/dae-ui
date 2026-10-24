@@ -82,7 +82,7 @@
 
   <div class="card">
     <div class="row"><h2 class="grow" style="margin:0">策略组</h2><button onclick="addGroup()">+ 新建策略组</button></div>
-    <div class="dim" style="margin-top:6px">自动模式：按关键词筛选节点 + 延迟最优。手动模式：固定使用选中的节点（切换即时热重载）。自定义组可绑域名关键词 / geosite 分类 / 域名列表 / 目标端口，命中的流量走该组；组卡右上角有加密货币、Emby 一键预设。默认组是全局兜底出口。</div>
+    <div class="dim" style="margin-top:6px">组分两种：代理组（自动=按地区点选筛节点+延迟最优；手动=固定节点）和直连组（不选节点，把你自己的域名填进域名后缀，命中直接连接、优先于所有代理组）。国内 IP 与域名已默认直连，所以 geosite 列表里不再显示国内分类。组卡右上角有加密货币、Emby 一键预设。默认组是全局兜底出口。</div>
     <div id="groupList"></div>
   </div>
 
@@ -137,6 +137,7 @@ function renderSwitch(){
   if (!el) return;
   const hasNodes = S.subs.some(s => ((S.nodes[s.tag]||{}).nodes||[]).length);
   el.innerHTML = S.groups.map((g,i)=>{
+    if (g.kind === "direct") return "";
     let opts = `<option value=""${g.mode==="auto"?" selected":""}>自动（延迟最优）</option>`;
     let found = g.mode !== "manual";
     for (const s of S.subs){
@@ -202,19 +203,27 @@ function groupHtml(g, i){
     <div class="row">
       <input type="text" value="${esc(g.name)}" style="max-width:220px;flex:none" onchange="gSet(${i},'name',this.value)">
       <span class="tag">${esc(g.id)}</span>
-      <select onchange="gSet(${i},'mode',this.value)">
+      ${isProxy ? "" : `<select onchange="gSet(${i},'kind',this.value)">
+        <option value="proxy"${g.kind!=="direct"?" selected":""}>代理组</option>
+        <option value="direct"${g.kind==="direct"?" selected":""}>直连组</option>
+      </select>`}
+      ${g.kind==="direct" ? '<span class="tag">直连 · 不走代理</span>' : `<select onchange="gSet(${i},'mode',this.value)">
         <option value="auto"${g.mode==="auto"?" selected":""}>自动（延迟最优）</option>
         <option value="manual"${g.mode==="manual"?" selected":""}>手动（固定节点）</option>
-      </select>
+      </select>`}
       <span class="grow"></span>
-      ${isProxy ? '<span class="dim">兜底组，不可删除</span>' : `<button onclick="applyPreset(${i},'wallet')">＋预设·加密货币</button><button onclick="applyPreset(${i},'emby')">＋预设·Emby</button><button class="danger" onclick="delGroup(${i})">删除组</button>`}
+      ${isProxy ? '<span class="dim">兜底组，不可删除</span>' : (g.kind==="direct"
+        ? `<button class="danger" onclick="delGroup(${i})">删除组</button>`
+        : `<button onclick="applyPreset(${i},'wallet')">＋预设·加密货币</button><button onclick="applyPreset(${i},'emby')">＋预设·Emby</button><button class="danger" onclick="delGroup(${i})">删除组</button>`)}
     </div>
     <div class="grid">
-      <label>订阅范围</label><div>${subChecks}<div class="dim">不勾 = 全部订阅</div></div>
-      ${g.mode==="manual"
+      ${g.kind==="direct"
+        ? `<label>出口</label><div class="dim">直连组不需要选节点。把你自己的域名填到下方「域名后缀」，命中的流量直接连接；直连规则优先于所有代理组。</div>`
+        : `<label>订阅范围</label><div>${subChecks}<div class="dim">不勾 = 全部订阅</div></div>`}
+      ${g.kind==="direct" ? "" : (g.mode==="manual"
         ? `<label>固定节点</label><div><select class="nodesel" onchange="gNode(${i},this.value)">${nodeOptions(g)}</select></div>`
-        : `<label>节点名包含</label><div>${regionChipsHtml(g, i)}<input type="text" value="${esc(customIncludeWords(g).join(", "))}" placeholder="自定义关键词（逗号分隔，可不填）" onchange="gIncludeCustom(${i},this.value)" style="margin-top:5px"></div>`}
-      <label>节点名排除</label><div><input type="text" value="${esc(csv(g.exclude))}" onchange="gSet(${i},'exclude',parseCsv(this.value))"></div>
+        : `<label>节点名包含</label><div>${regionChipsHtml(g, i)}<input type="text" value="${esc(customIncludeWords(g).join(", "))}" placeholder="自定义关键词（逗号分隔，可不填）" onchange="gIncludeCustom(${i},this.value)" style="margin-top:5px"></div>`)}
+      ${g.kind==="direct" ? "" : `<label>节点名排除</label><div><input type="text" value="${esc(csv(g.exclude))}" onchange="gSet(${i},'exclude',parseCsv(this.value))"></div>`}
       ${isProxy ? "" : `<label>域名关键词</label><div><input type="text" value="${esc(csv(g.domains))}" placeholder="如 youtube, netflix（命中走本组）" onchange="gSet(${i},'domains',parseCsv(this.value))"></div>
       <label>geosite 分类</label><div><input type="text" placeholder="搜索分类，如 emby、crypto、youtube…" oninput="renderGeoPick(${i}, this.value)"><span class="dim" id="geoCount${i}" style="margin-left:8px"></span><div class="geopick" id="geoPick${i}"></div></div>
       <label>域名后缀</label><div><textarea rows="2" style="width:100%;background:#0d1319;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 9px" placeholder="没有 geosite 分类时用它：一行一个域名，后缀匹配，如 bitget.com、你的 Emby 服务器域名" onchange="gSet(${i},'suffixes',parseCsv(this.value.replace(/\\n/g,',')))">${esc((g.suffixes||[]).join("\n"))}</textarea></div>
@@ -235,7 +244,7 @@ function applyPreset(i, key){
   render();
 }
 
-function gSet(i, k, v){ S.groups[i][k] = v; if (k==="mode") render(); }
+function gSet(i, k, v){ S.groups[i][k] = v; if (k==="mode" || k==="kind") render(); }
 
 /* ---------- 节点名关键词：地区点选 ---------- */
 const REGION_PRESETS = [
@@ -279,16 +288,21 @@ const GEO_BUCKETS = [
   { name: "📺 流媒体", cats: ["youtube","netflix","disney","hbo","hulu","twitch","primevideo","abema","dazn","niconico","spotify","soundcloud","tidal","kkbox","vimeo","bahamut","category-emby","category-media"] },
   { name: "🤖 AI", cats: ["openai","google-gemini","perplexity","huggingface","github-copilot","deepseek","doubao","category-ai-cn"] },
   { name: "💰 加密货币", cats: ["category-cryptocurrency","binance","bybit","okx","gateio","huobi","kraken","kucoin"] },
-  { name: "🇨🇳 国内网站", cats: ["geolocation-cn","category-media-cn","bilibili","iqiyi","youku","acfun","baidu","zhihu","xiaohongshu","douyin","alibaba","tencent","netease","meituan","xiaomi","huawei","oppo","vivo","category-bank-cn","category-education-cn"] },
   { name: "🍎 苹果", cats: ["apple","icloud","apple-music","apple-podcasts"] },
   { name: "💬 社交", cats: ["telegram","twitter","facebook","whatsapp","discord","reddit","line","signal","meta","threads","linkedin","tiktok"] },
   { name: "🎮 游戏", cats: ["steam","category-games","playstation","xbox","nintendo","roblox","riot","gog"] },
   { name: "🛠 科技开发", cats: ["google","github","gitlab","docker","onedrive","microsoft-dev","amazon","cloudflare","adobe","nvidia","oracle","mozilla","notion","dropbox","category-dev"] },
 ];
+/* 国内 IP/域名已由内置规则默认直连，国内分类不出现在选择器里，免得新手误选 */
+const CN_HIDE = new Set(["geolocation-cn","bilibili","iqiyi","youku","acfun","baidu","zhihu","xiaohongshu","douyin","alibaba","tencent","netease","meituan","xiaomi","huawei","oppo","vivo"]);
+function visibleCats(){
+  const all = GEO_CATS.length ? GEO_CATS : GEO_FALLBACK;
+  return all.filter(c => !c.endsWith("-cn") && !CN_HIDE.has(c));
+}
 function renderGeoPick(i, filter){
   const el = document.getElementById("geoPick" + i);
   if (!el) return;
-  const cats = GEO_CATS.length ? GEO_CATS : GEO_FALLBACK;
+  const cats = visibleCats();
   const catSet = new Set(cats);
   const f = String(filter || "").trim().toLowerCase();
   const sel = new Set(S.groups[i].geosites || []);
@@ -328,7 +342,7 @@ function gNode(i, v){
 function delGroup(i){ S.groups.splice(i,1); render(); }
 function addGroup(){
   const id = Math.random().toString(16).slice(2,10);
-  S.groups.push({ id, name: "新策略组", mode: "auto", subs: [], include: [], exclude: ["剩余","到期","过期","官网","流量"], domains: [], geosites: [], suffixes: [], ports: [], node: null });
+  S.groups.push({ id, name: "新策略组", mode: "auto", kind: "proxy", subs: [], include: [], exclude: ["剩余","到期","过期","官网","流量"], domains: [], geosites: [], suffixes: [], ports: [], node: null });
   render();
 }
 
