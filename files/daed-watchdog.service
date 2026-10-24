@@ -1,0 +1,7 @@
+[Unit]
+Description=daed watchdog health check (restart if HTTP wedged)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/daed-watchdog.sh
