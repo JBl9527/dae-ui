@@ -529,6 +529,17 @@ class Handler(BaseHTTPRequestHandler):
             if action not in ("start", "stop", "restart"):
                 self._json({"ok": False, "message": "动作不合法"})
                 return
+            if action in ("start", "restart"):
+                # Ensure a generated+validated config exists first; otherwise
+                # systemd fails opaquely with "control process exited".
+                res = apply_config()
+                if not res.get("ok") and res.get("step") != "reload":
+                    self._json({
+                        "ok": False,
+                        "message": "启动前应用配置失败：" + str(res.get("message", "")),
+                        "output": res.get("output", ""),
+                    })
+                    return
             rc, out = run_cmd(["systemctl", action, "dae"], timeout=90)
             self._json({"ok": rc == 0, "active": dae_active(), "output": out[-1500:]})
             return
