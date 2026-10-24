@@ -44,6 +44,17 @@ sudo bash install.sh
 
 ## 首次设置清单
 
+0. **⚠️ 先建管理员账号（新版 UI 的坑）**：全新安装还没有任何账号，但向导第 2 步直接让你
+   “登录”，输什么都会报 `incorrect username or password`。先在装机终端手动建第一个账号
+   （把密码换成你自己的），返回一长串 token 即成功，然后回界面用同样的账号密码登录：
+
+   ```bash
+   curl -s http://127.0.0.1:2023/graphql -H 'Content-Type: application/json' \
+     -d '{"query":"mutation { createUser(username: \"admin\", password: \"改成你的密码\") }"}'
+   ```
+
+   （原理：后端只在“零用户”时开放 `createUser` 建号，UI 向导没有走这条路。已实测此流程。）
+
 1. **导入订阅**：在界面里添加你的订阅链接，等待节点拉取完成。
 2. **编排策略组**：在 Orchestrate 页建组、选节点（可先测延迟再选）。
 3. **⚠️ 必改 DNS（治断流的关键）**：把配置里的 `dns` 段改成下面这样——
