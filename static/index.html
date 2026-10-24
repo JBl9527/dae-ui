@@ -28,11 +28,15 @@
   #msg { min-height:22px; margin-top:8px; white-space:pre-wrap; }
   .tag { font-size:12px; background:#24314a; border-radius:4px; padding:1px 7px; }
   select.nodesel { width:100%; }
+  .chip { padding:4px 11px; margin:2px 3px 2px 0; border-radius:20px; font-size:13px; }
+  .chip.on { background:var(--acc); border-color:var(--acc); color:#fff; }
+  .geopick { max-height:132px; overflow:auto; border:1px solid var(--line); border-radius:6px; padding:6px 8px; margin-top:6px; background:#0d1319; }
+  .geopick label { display:inline-flex; gap:4px; align-items:center; margin:3px 12px 3px 0; font-size:13px; cursor:pointer; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>dae-ui <span class="dim" style="font-size:13px">订阅 · 策略组 · 节点切换</span></h1>
+  <h1>dae-ui <span class="dim" style="font-size:13px">订阅 · 策略组 · 节点切换</span> <span class="dim" id="panelVer" style="font-size:12px"></span></h1>
 
   <div class="card">
     <div class="row">
@@ -75,17 +79,6 @@
   <div class="card">
     <div class="row"><h2 class="grow" style="margin:0">策略组</h2><button onclick="addGroup()">+ 新建策略组</button></div>
     <div class="dim" style="margin-top:6px">自动模式：按关键词筛选节点 + 延迟最优。手动模式：固定使用选中的节点（切换即时热重载）。自定义组可绑域名关键词 / geosite 分类 / 域名列表 / 目标端口，命中的流量走该组；组卡右上角有加密货币、Emby 一键预设。默认组是全局兜底出口。</div>
-    <datalist id="geositeList">
-      <option value="category-cryptocurrency"></option><option value="category-emby"></option>
-      <option value="category-media"></option><option value="category-games"></option>
-      <option value="youtube"></option><option value="netflix"></option><option value="disney"></option>
-      <option value="hbo"></option><option value="hulu"></option><option value="twitch"></option>
-      <option value="spotify"></option><option value="bahamut"></option><option value="steam"></option>
-      <option value="telegram"></option><option value="openai"></option><option value="github"></option>
-      <option value="google"></option><option value="apple"></option><option value="twitter"></option>
-      <option value="facebook"></option><option value="tiktok"></option><option value="discord"></option>
-      <option value="reddit"></option><option value="amazon"></option><option value="cloudflare"></option>
-    </datalist>
     <div id="groupList"></div>
   </div>
 
@@ -130,6 +123,9 @@ function render(){
   const gl = document.getElementById("groupList");
   gl.innerHTML = S.groups.map((g,i)=> groupHtml(g,i)).join("");
   renderSwitch();
+  S.groups.forEach((g, gi)=> renderGeoPick(gi, ""));
+  const pv = document.getElementById("panelVer");
+  if (pv && S.panel_version) pv.textContent = "v" + S.panel_version;
 }
 
 function renderSwitch(){
@@ -213,11 +209,11 @@ function groupHtml(g, i){
       <label>订阅范围</label><div>${subChecks}<div class="dim">不勾 = 全部订阅</div></div>
       ${g.mode==="manual"
         ? `<label>固定节点</label><div><select class="nodesel" onchange="gNode(${i},this.value)">${nodeOptions(g)}</select></div>`
-        : `<label>节点名包含</label><div><input type="text" value="${esc(csv(g.include))}" placeholder="如 HK, 香港（逗号分隔，空=不限）" onchange="gSet(${i},'include',parseCsv(this.value))"></div>`}
+        : `<label>节点名包含</label><div>${regionChipsHtml(g, i)}<input type="text" value="${esc(customIncludeWords(g).join(", "))}" placeholder="自定义关键词（逗号分隔，可不填）" onchange="gIncludeCustom(${i},this.value)" style="margin-top:5px"></div>`}
       <label>节点名排除</label><div><input type="text" value="${esc(csv(g.exclude))}" onchange="gSet(${i},'exclude',parseCsv(this.value))"></div>
       ${isProxy ? "" : `<label>域名关键词</label><div><input type="text" value="${esc(csv(g.domains))}" placeholder="如 youtube, netflix（命中走本组）" onchange="gSet(${i},'domains',parseCsv(this.value))"></div>
-      <label>geosite 分类</label><div><input type="text" list="geositeList" value="${esc(csv(g.geosites))}" placeholder="如 category-cryptocurrency, category-emby" onchange="gSet(${i},'geosites',parseCsv(this.value))"></div>
-      <label>域名列表</label><div><textarea rows="2" style="width:100%;background:#0d1319;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 9px" placeholder="后缀匹配，一行一个，如 bitget.com、你的 Emby 服务器域名" onchange="gSet(${i},'suffixes',parseCsv(this.value.replace(/\\n/g,',')))">${esc((g.suffixes||[]).join("\n"))}</textarea></div>
+      <label>geosite 分类</label><div><input type="text" placeholder="搜索分类，如 emby、crypto、youtube…" oninput="renderGeoPick(${i}, this.value)"><span class="dim" id="geoCount${i}" style="margin-left:8px"></span><div class="geopick" id="geoPick${i}"></div></div>
+      <label>域名后缀</label><div><textarea rows="2" style="width:100%;background:#0d1319;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 9px" placeholder="没有 geosite 分类时用它：一行一个域名，后缀匹配，如 bitget.com、你的 Emby 服务器域名" onchange="gSet(${i},'suffixes',parseCsv(this.value.replace(/\\n/g,',')))">${esc((g.suffixes||[]).join("\n"))}</textarea></div>
       <label>目标端口</label><div><input type="text" value="${esc(csv(g.ports))}" placeholder="如 8096, 8920（Emby 常用；按端口命中走本组）" onchange="gSet(${i},'ports',parseCsv(this.value).map(Number).filter(n=>n>0&&n<=65535))"></div>`}
     </div>
   </div>`;
@@ -236,6 +232,58 @@ function applyPreset(i, key){
 }
 
 function gSet(i, k, v){ S.groups[i][k] = v; if (k==="mode") render(); }
+
+/* ---------- 节点名关键词：地区点选 ---------- */
+const REGION_PRESETS = [
+  ["香港","HK"],["台湾","TW"],["日本","JP"],["新加坡","SG"],["美国","US"],["韩国","KR"],
+  ["英国","UK"],["德国","DE"],["法国","FR"],["澳大利亚","AU"],["加拿大","CA"],["印度","IN"],
+  ["荷兰","NL"],["土耳其","TR"],["俄罗斯","RU"],["巴西","BR"],["阿根廷","AR"],["泰国","TH"],["越南","VN"],["马来西亚","MY"],
+];
+const PRESET_WORDS = new Set(REGION_PRESETS.flat());
+function regionOn(g, vars){ return vars.some(w => (g.include||[]).includes(w)); }
+function regionChipsHtml(g, i){
+  return REGION_PRESETS.map(vars =>
+    `<button type="button" class="chip${regionOn(g, vars) ? " on" : ""}" onclick="toggleRegion(${i},'${vars[0]}')">${esc(vars[0])}</button>`
+  ).join("");
+}
+function toggleRegion(i, label){
+  const vars = REGION_PRESETS.find(v => v[0] === label) || [label];
+  let inc = [...(S.groups[i].include || [])];
+  if (regionOn(S.groups[i], vars)) inc = inc.filter(w => !vars.includes(w));
+  else for (const w of vars) if (!inc.includes(w)) inc.push(w);
+  S.groups[i].include = inc;
+  render();
+}
+function customIncludeWords(g){ return (g.include || []).filter(w => !PRESET_WORDS.has(w)); }
+function gIncludeCustom(i, v){
+  const keep = (S.groups[i].include || []).filter(w => PRESET_WORDS.has(w));
+  S.groups[i].include = [...keep, ...parseCsv(v)];
+}
+
+/* ---------- geosite 分类：搜索 + 勾选 ---------- */
+let GEO_CATS = [];
+const GEO_FALLBACK = ["category-cryptocurrency","category-emby","category-media","category-games","category-ads","youtube","netflix","disney","hbo","hulu","twitch","spotify","bahamut","steam","telegram","openai","github","google","apple","twitter","facebook","tiktok","discord","reddit","amazon","cloudflare"];
+function geoToggle(i, cat, on){
+  let arr = [...(S.groups[i].geosites || [])];
+  if (on && !arr.includes(cat)) arr.push(cat);
+  if (!on) arr = arr.filter(c => c !== cat);
+  S.groups[i].geosites = arr;
+  const el = document.getElementById("geoCount" + i);
+  if (el) el.textContent = arr.length ? `已选 ${arr.length} 个` : "";
+}
+function renderGeoPick(i, filter){
+  const el = document.getElementById("geoPick" + i);
+  if (!el) return;
+  const cats = GEO_CATS.length ? GEO_CATS : GEO_FALLBACK;
+  const f = String(filter || "").trim().toLowerCase();
+  const sel = new Set(S.groups[i].geosites || []);
+  const list = cats.filter(c => !f || c.includes(f)).slice(0, 400);
+  el.innerHTML = list.map(c =>
+    `<label><input type="checkbox" ${sel.has(c) ? "checked" : ""} onchange="geoToggle(${i},'${c}',this.checked)">${esc(c)}</label>`
+  ).join("") || '<span class="dim">没有匹配的分类</span>';
+  const cnt = document.getElementById("geoCount" + i);
+  if (cnt) cnt.textContent = sel.size ? `已选 ${sel.size} 个` : "";
+}
 function gSub(i, tag, on){
   let arr = S.groups[i].subs || [];
   if (on && !arr.includes(tag)) arr.push(tag);
@@ -327,6 +375,10 @@ async function loadLogs(){
 (async function init(){
   const st = await api("/api/state");
   S = st; render();
+  try {
+    const g = await api("/api/geosite");
+    if (g.ok && g.categories && g.categories.length){ GEO_CATS = g.categories; render(); }
+  } catch (e) { /* 用内置候选列表兜底 */ }
 })();
 </script>
 </body>
