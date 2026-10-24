@@ -25,7 +25,15 @@ sudo bash install.sh
 - 适用 Debian / Ubuntu **x86_64 与 arm64**（含斐讯 N1 等 armbian 盒子，见下节）；重跑即升级/修复（幂等）。
 - 若机器上装过 v1（自研面板 + 独立版 dae），install.sh 会自动停用并清理它们；
   v1 的 dae 配置目录会保留为 `/etc/dae.v1.bak`。
-- 装完打开 `http://<机器IP>:2023`，首次使用先创建管理员账号。
+- 装完打开 `http://<机器IP>:2023`。
+
+**安装向导**：在终端里运行时会先依次询问（回车即默认值）——
+① 面板管理员用户名（默认 admin）② 面板管理员密码（留空 = 装后手动建号）
+③ 面板监听端口（默认 2023）④ 是否装假死看门狗（默认 是）
+⑤ 是否清理 v1 残留（默认 是）⑥ 下载线路（auto/direct/mirror，默认 auto）。
+向导里设了密码的，装完会自动建好管理员账号（设备上已有账号则跳过、不改动），打开界面直接登录。
+无人值守可用环境变量代替向导：`DAEDUI_ADMIN_USER`、`DAEDUI_ADMIN_PASS`、`DAEDUI_PORT`、
+`DAEDUI_WATCHDOG=1/0`、`DAEDUI_CLEAN_V1=1/0`、`DAEDUI_ROUTE=auto/direct/mirror`（配合 `sudo -E`）。
 
 ## ARM / 斐讯 N1（armbian）
 
