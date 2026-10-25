@@ -66,9 +66,10 @@ if [ -t 0 ] && [ -t 1 ]; then
       echo "   两次密码不一致，请重输" > /dev/tty
       continue
     fi
-    # 后端 createUser 的硬性密码策略：含字母+数字、至少 6 位，不合规会被拒并导致建号失败
-    if [ "${#_p1}" -lt 6 ] || ! printf '%s' "$_p1" | grep -q '[A-Za-z]' || ! printf '%s' "$_p1" | grep -q '[0-9]'; then
-      echo "   密码太弱：后端要求含字母+数字、至少 6 位（纯字母/纯数字都不行），请重输" > /dev/tty
+    # 密码规则取后端与官方 UI 的交集：后端要求含字母+数字、≥6 位；
+    # 官方 UI 的登录/注册表单只接受 6~20 位，超长密码建得出却登不进，必须在向导就拦住
+    if [ "${#_p1}" -lt 6 ] || [ "${#_p1}" -gt 20 ] || ! printf '%s' "$_p1" | grep -q '[A-Za-z]' || ! printf '%s' "$_p1" | grep -q '[0-9]'; then
+      echo "   密码不合规：需含字母+数字、6~20 位（太短太长、纯字母/纯数字都不行），请重输" > /dev/tty
       continue
     fi
     ADMIN_PASS="$_p1"; break
