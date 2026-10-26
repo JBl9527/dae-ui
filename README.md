@@ -7,7 +7,7 @@
 
 | 组件 | 说明 |
 |---|---|
-| 官方 daed **v2.1.1** | 内嵌 dae 内核 v2.1.1（最新）+ 官方新版 Web UI，官方 .deb 安装，sha256 对照官方 .dgst 校验 |
+| daed **v2.1.1 修复版** | 官方源码构建，仅修复 Web 登录死循环（见下），内嵌 dae 内核 v2.1.1 + 官方新版 Web UI；.deb 在本仓库 Release，sha256 对照随包 .dgst 校验 |
 | systemd 硬化 drop-in | 官方 unit 的 `Restart=on-abnormal` 不覆盖 panic 非零退出与进程假死 → 改 `Restart=always` |
 | 看门狗 timer | 每分钟探活 `http://127.0.0.1:2023`，连续 2 次无响应（约 2 分钟）自动重启 daed，记录在 journal（tag `daed-watchdog`） |
 
@@ -39,7 +39,7 @@ sudo bash install.sh
 
 ## ARM / 斐讯 N1（armbian）
 
-- 官方 v2.1.1 提供 arm64 的 .deb，install.sh 按 `uname -m` 自动选包，流程与 x86 完全一致。
+- 修复版同时提供 x86_64 与 arm64 的 .deb，install.sh 按 `uname -m` 自动选包，流程完全一致。
 - **装之前先在盒子上验内核**（dae 2.x 的硬要求，不满足会在启动时直接报错）：
 
   ```bash
@@ -123,6 +123,11 @@ sudo systemctl daemon-reload
 
 ## 版本说明
 
-- 内核与 UI 均锁定官方 **v2.1.1**（dae / daed 同步发布）。升级时改 `install.sh` 里的
-  `DAED_VERSION` 后重跑即可。
+- 内核与 UI 均锁定 **v2.1.1**（dae / daed 同步发布）。安装包为本仓库 Release 的
+  `daed-2.1.1-fix1`：官方 v2.1.1 的 Web 前端在登录成功后会因 QueryProvider 按
+  `endpoint|token` identity 重挂载整个界面，把设置向导的步骤状态重置，表现为
+  「密码正确却永远回到向导第 1 步」。修复版只改 `apps/web` 的 Setup 登录处理
+  （存 token 之前先路由到根路径 `/`，让重挂载后的界面直接落到控制面板），
+  后端与内核未动。官方版本升级时改 `install.sh` 里的 `DAED_VERSION` 后重跑即可，
+  若官方仍未修复该 bug，需把同一补丁重新应用到新版本源码再构建。
 - v1 的自研面板代码已从本仓库移除（git 历史里仍可找回）。
