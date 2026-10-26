@@ -32,14 +32,19 @@ done
 # ---------- 安装选项（向导 / 环境变量 / 默认值） ----------
 # 终端交互运行时走问答向导；非交互（脚本调用）时用环境变量或默认值：
 #   DAEDUI_ADMIN_USER=admin DAEDUI_ADMIN_PASS='你的密码' DAEDUI_PORT=2023 \
-#   DAEDUI_WATCHDOG=1 DAEDUI_CLEAN_V1=1 DAEDUI_ROUTE=auto sudo -E bash install.sh
+#   DAEDUI_WATCHDOG=1 DAEDUI_CLEAN_V1=1 DAEDUI_ROUTE=auto DAEDUI_AUTOGROUP=0 sudo -E bash install.sh
 # ROUTE 取值：auto（探活后自动选）/ direct（GitHub 直连）/ mirror（ghfast 镜像）
+# 只补建地区分组（不重装）：sudo bash install.sh --autogroup
 ADMIN_USER="${DAEDUI_ADMIN_USER:-admin}"
 ADMIN_PASS="${DAEDUI_ADMIN_PASS:-}"
 PORT="${DAEDUI_PORT:-2023}"
 WANT_WATCHDOG="${DAEDUI_WATCHDOG:-1}"
 CLEAN_V1="${DAEDUI_CLEAN_V1:-1}"
 ROUTE="${DAEDUI_ROUTE:-auto}"
+AUTOGROUP="${DAEDUI_AUTOGROUP:-0}"
+
+# JSON 字符串值转义（一层）。GraphQL 报文里的值要连过两层解析，调用处须套两遍（见建号处）。
+json_esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' -e 's/\r/\\r/g'; }
 
 ask() { # 提示 默认值 目标变量名
   local _p="$1" _d="$2" _v="$3" _ans
@@ -59,7 +64,7 @@ ask_yn() { # 提示 默认(1/0) 目标变量名
   esac
 }
 
-if [ -t 0 ] && [ -t 1 ]; then
+if [ "${1:-}" != "--autogroup" ] && [ -t 0 ] && [ -t 1 ]; then
   echo
   echo "===== 安装向导（直接回车用默认值） ====="
   ask "1) 面板管理员用户名" "$ADMIN_USER" ADMIN_USER
@@ -86,6 +91,7 @@ if [ -t 0 ] && [ -t 1 ]; then
   ask_yn "4) 安装假死看门狗（每分钟探活，假死自动重启）" "$WANT_WATCHDOG" WANT_WATCHDOG
   ask_yn "5) 清理旧版 v1 自研面板/独立 dae 残留" "$CLEAN_V1" CLEAN_V1
   ask "6) 下载线路（auto 自动 / direct 直连 / mirror 镜像）" "$ROUTE" ROUTE
+  ask_yn "7) 装完自动按地区建分组（香港/美国/台湾/日本/新加坡/韩国/其他）" "$AUTOGROUP" AUTOGROUP
 fi
 
 case "$PORT" in
@@ -98,7 +104,167 @@ case "$ROUTE" in auto|direct|mirror) ;; *) ROUTE="auto" ;; esac
 
 echo "== 本次安装选项 =="
 echo "  管理员：$ADMIN_USER（$([ -n "$ADMIN_PASS" ] && echo '装完自动建号' || echo '未设密码，装后手动建号')）"
-echo "  端口：$PORT ｜ 看门狗：$([ "$WANT_WATCHDOG" = "1" ] && echo '开' || echo '关') ｜ 清理 v1：$([ "$CLEAN_V1" = "1" ] && echo '是' || echo '否') ｜ 线路：$ROUTE"
+echo "  端口：$PORT ｜ 看门狗：$([ "$WANT_WATCHDOG" = "1" ] && echo '开' || echo '关') ｜ 清理 v1：$([ "$CLEAN_V1" = "1" ] && echo '是' || echo '否') ｜ 线路：$ROUTE ｜ 自动建组：$([ "$AUTOGROUP" = "1" ] && echo '开' || echo '关')"
+
+# ---------- 按地区自动建分组 ----------
+# 原理：daed 的组可按「订阅 + 节点名正则」绑定（groupAddSubscriptions，后端是 upsert，
+# 重跑只会刷新正则与新订阅绑定，不会重复建组）。六个地区组用正则，订阅更新时新节点
+# 自动归组；「其他」没有排除型正则可用，把未被六组认领的节点逐个钉入（groupAddNodes），
+# 订阅更新后重跑本功能（--autogroup）会先清旧钉选再重算。
+# 组名受 daed 限制只能是英文标识符（dae 配置语法，路由按名引用），故用英文名
+REGION_NAMES=("HongKong" "USA" "Taiwan" "Japan" "Singapore" "Korea")
+REGION_REGEX=(
+  '香港|Hong Kong|🇭🇰|(^|[^A-Za-z])HK([^A-Za-z]|$)'
+  '美国|美國|United States|🇺🇸|(^|[^A-Za-z])(US|USA)([^A-Za-z]|$)|洛杉矶|洛杉磯|硅谷|Silicon Valley'
+  '台湾|台灣|Taiwan|🇹🇼|(^|[^A-Za-z])TW([^A-Za-z]|$)'
+  '日本|Japan|🇯🇵|(^|[^A-Za-z])JP([^A-Za-z]|$)|东京|東京|大阪'
+  '新加坡|Singapore|🇸🇬|(^|[^A-Za-z])SG([^A-Za-z]|$)|狮城|獅城'
+  '韩国|韓國|Korea|🇰🇷|(^|[^A-Za-z])KR([^A-Za-z]|$)|首尔|首爾'
+)
+
+json_id_list() { # 每行一个 id，输出 \"id1\",\"id2\" 形式（引号带反斜杠，供拼进 GraphQL 的 JSON 字符串；切勿用裸引号，会撑破 JSON）
+  local _out="" _id _bs='\'
+  while IFS= read -r _id || [ -n "$_id" ]; do
+    [ -z "$_id" ] && continue
+    _out="${_out}${_bs}\"${_id}${_bs}\","
+  done
+  printf '%s' "${_out%,}"
+}
+
+gql() { # $1=报文 $2=token(可空)，输出响应原文，网络失败输出空
+  if [ -n "${2:-}" ]; then
+    curl -s -m 15 "http://127.0.0.1:$PORT/graphql" -H 'Content-Type: application/json' -H "Authorization: Bearer $2" -d "$1" || true
+  else
+    curl -s -m 15 "http://127.0.0.1:$PORT/graphql" -H 'Content-Type: application/json' -d "$1" || true
+  fi
+}
+
+do_autogroup() {
+  echo "== 自动按地区建分组 =="
+  if [ -z "$ADMIN_PASS" ]; then
+    echo "  未提供管理员密码，拿不到面板接口令牌，本次跳过。导入订阅后可补跑："
+    echo "    DAEDUI_ADMIN_PASS='你的密码' sudo -E bash install.sh --autogroup"
+    return 0
+  fi
+  local _U _P PAYLOAD RESP TOKEN SUB_IDS SUB_JSON GROUP_TOKENS
+  _U="$(json_esc "$(json_esc "$ADMIN_USER")")"
+  _P="$(json_esc "$(json_esc "$ADMIN_PASS")")"
+  PAYLOAD='{"query":"query { token(username: \"'"${_U}"'\", password: \"'"${_P}"'\") }"}'
+  RESP="$(gql "$PAYLOAD")"
+  TOKEN="$(printf '%s' "$RESP" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p' | head -1)"
+  if [ -z "$TOKEN" ]; then
+    echo "  登录面板接口失败（账号或密码不对？），跳过自动建组。返回：${RESP:-无响应}"
+    return 0
+  fi
+  RESP="$(gql '{"query":"query { subscriptions { id } }"}' "$TOKEN")"
+  SUB_IDS="$(printf '%s' "$RESP" | grep -o '"id":"[^"]*"' | sed 's/"id":"//; s/"$//' || true)"
+  if [ -z "$SUB_IDS" ]; then
+    echo "  尚无订阅，跳过建组。先在面板导入订阅，再运行：sudo bash install.sh --autogroup"
+    return 0
+  fi
+  SUB_JSON="$(printf '%s\n' "$SUB_IDS" | json_id_list)"
+  RESP="$(gql '{"query":"query { groups { id name } }"}' "$TOKEN")"
+  GROUP_TOKENS="$(printf '%s' "$RESP" | grep -o '"id":"[^"]*"\|"name":"[^"]*"' || true)"
+
+  find_or_create_group() { # $1=组名，打印组 id（失败打印空）
+    local _name="$1" _gid _N _resp
+    _gid="$(printf '%s\n' "$GROUP_TOKENS" | awk -F'"' -v want="$_name" '
+      /^"id":/ { id=$4 }
+      /^"name":/ { if ($4==want) { print id; exit } }')"
+    if [ -z "$_gid" ]; then
+      _N="$(json_esc "$(json_esc "$_name")")"
+      _resp="$(gql '{"query":"mutation { createGroup(name: \"'"${_N}"'\", policy: min_moving_avg) { id } }"}' "$TOKEN")"
+      _gid="$(printf '%s' "$_resp" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//; s/"$//' || true)"
+      [ -z "$_gid" ] && echo "  [详情] 建组 ${_name} 返回：${_resp:-无响应}" >&2
+    fi
+    printf '%s' "$_gid"
+  }
+
+  local i gname gregex gid _G _R
+  for i in "${!REGION_NAMES[@]}"; do
+    gname="${REGION_NAMES[$i]}"; gregex="${REGION_REGEX[$i]}"
+    gid="$(find_or_create_group "$gname")"
+    if [ -z "$gid" ]; then echo "  [跳过] 「$gname」组创建失败"; continue; fi
+    _G="$(json_esc "$(json_esc "$gid")")"
+    _R="$(json_esc "$(json_esc "$gregex")")"
+    RESP="$(gql '{"query":"mutation { groupAddSubscriptions(id: \"'"${_G}"'\", subscriptionIDs: ['"${SUB_JSON}"'], nameFilterRegex: \"'"${_R}"'\") }"}' "$TOKEN")"
+    case "$RESP" in
+      *'"groupAddSubscriptions"'*) echo "  「$gname」组就绪（正则绑定全部订阅）" ;;
+      *) echo "  [警告] 「$gname」绑定订阅返回异常：${RESP:-无响应}" ;;
+    esac
+  done
+
+  # 「其他」：逐个订阅拉节点（daed 的 nodes 查询不带 subscriptionId 时只返回无订阅的
+  # 独立节点，订阅节点必须按订阅查），本地扣掉被六个地区正则认领的，剩下的钉入
+  local TOTAL_ALL NODE_TOKENS LINES LEFTOVER_IDS LEFT TOTAL nid nname claimed r _line _sid _resp
+  TOTAL_ALL=0; NODE_TOKENS=""
+  for _sid in $SUB_IDS; do
+    _resp="$(gql '{"query":"query { nodes(subscriptionId: \"'"${_sid}"'\", first: 2000) { totalCount edges { id name } } }"}' "$TOKEN")"
+    _cnt="$(printf '%s' "$_resp" | sed -n 's/.*"totalCount":\([0-9]*\).*/\1/p' | head -1)"
+    [ -n "$_cnt" ] && TOTAL_ALL=$((TOTAL_ALL + _cnt))
+    NODE_TOKENS="${NODE_TOKENS}
+$(printf '%s' "$_resp" | grep -o '"id":"[^"]*"\|"name":"[^"]*"' || true)"
+  done
+  LINES="$(printf '%s\n' "$NODE_TOKENS" | awk -F'"' '
+    /^"id":/ { id=$4 }
+    /^"name":/ { print id "\t" $4 }')"
+  LEFTOVER_IDS=""; LEFT=0; TOTAL=0
+  while IFS= read -r _line; do
+    [ -z "$_line" ] && continue
+    nid="${_line%%$'\t'*}"; nname="${_line#*$'\t'}"
+    TOTAL=$((TOTAL+1)); claimed=0
+    for r in "${REGION_REGEX[@]}"; do
+      if printf '%s' "$nname" | grep -Eq "$r"; then claimed=1; break; fi
+    done
+    if [ "$claimed" = "0" ]; then
+      LEFT=$((LEFT+1))
+      LEFTOVER_IDS="${LEFTOVER_IDS} ${nid}"
+    fi
+  done <<EOF
+$LINES
+EOF
+  gid="$(find_or_create_group "Others")"
+  if [ -n "$gid" ]; then
+    _G="$(json_esc "$(json_esc "$gid")")"
+    # 先清掉该组旧的逐个钉选（订阅更新后节点 id 会变），再钉入本次算出的
+    RESP="$(gql '{"query":"query { groups(id: \"'"${_G}"'\") { nodes { id } } }"}' "$TOKEN")"
+    local OLD_IDS OLD_JSON
+    OLD_IDS="$(printf '%s' "$RESP" | grep -o '"id":"[^"]*"' | sed 's/"id":"//; s/"$//' || true)"
+    OLD_JSON="$(printf '%s\n' "$OLD_IDS" | json_id_list)"
+    if [ -n "$OLD_JSON" ]; then
+      gql '{"query":"mutation { groupDelNodes(id: \"'"${_G}"'\", nodeIDs: ['"${OLD_JSON}"']) }"}' "$TOKEN" > /dev/null
+    fi
+    if [ "$LEFT" -gt 0 ]; then
+      local LEFTOVER_JSON
+      LEFTOVER_JSON="$(printf '%s\n' "$LEFTOVER_IDS" | tr ' ' '\n' | json_id_list)"
+      RESP="$(gql '{"query":"mutation { groupAddNodes(id: \"'"${_G}"'\", nodeIDs: ['"${LEFTOVER_JSON}"']) }"}' "$TOKEN")"
+      case "$RESP" in
+        *'"groupAddNodes"'*) : ;;
+        *) echo "  [警告] 「Others」钉入节点返回异常：${RESP:-无响应}" ;;
+      esac
+    fi
+    echo "  「Others」组就绪：$LEFT 个未被六地区认领的节点（本次共扫描 $TOTAL 个）"
+    if [ -n "$TOTAL_ALL" ] && [ "$TOTAL_ALL" -gt "$TOTAL" ] 2>/dev/null; then
+      echo "  [提示] 节点总数 $TOTAL_ALL 超过单次拉取上限，本次只处理前 $TOTAL 个；节点特别多时「其他」可能不全"
+    fi
+  else
+    echo "  [跳过] 「Others」组创建失败"
+  fi
+  echo "  提示：之后新增订阅或订阅大批量更新节点后，重跑 sudo bash install.sh --autogroup 即可刷新（六地区组是正则绑定、自动纳新，主要是补「其他」与新订阅的绑定）"
+}
+
+if [ "${1:-}" = "--autogroup" ]; then
+  if [ -z "$ADMIN_PASS" ] && [ -t 0 ]; then
+    printf '面板管理员用户名 [%s]: ' "$ADMIN_USER" > /dev/tty
+    read -r _ans < /dev/tty || _ans=""; [ -n "$_ans" ] && ADMIN_USER="$_ans"
+    printf '面板管理员密码: ' > /dev/tty
+    read -r -s ADMIN_PASS < /dev/tty || ADMIN_PASS=""; echo > /dev/tty
+    printf '面板监听端口 [%s]: ' "$PORT" > /dev/tty
+    read -r _ans < /dev/tty || _ans=""; [ -n "$_ans" ] && PORT="$_ans"
+  fi
+  do_autogroup
+  exit 0
+fi
 
 echo "== 内核 eBPF 预检 =="
 # dae 2.x 路由依赖 bpf_loop（内核 ≥5.17）与 vmlinux BTF（CO-RE 加载），缺一必启动失败。
@@ -253,6 +419,9 @@ if [ -n "$ADMIN_PASS" ] && [ -z "${DAEDUI_SKIP_HEALTHCHECK:-}" ]; then
   esac
   echo "  $ACCOUNT_NOTE"
 fi
+if [ "$AUTOGROUP" = "1" ] && [ -z "${DAEDUI_SKIP_HEALTHCHECK:-}" ]; then
+  do_autogroup
+fi
 unset ADMIN_PASS _p1 _p2 2>/dev/null || true
 
 echo
@@ -267,6 +436,6 @@ echo "  接下来（详见 README）："
 if [ -z "${ACCOUNT_NOTE}" ]; then
   echo "    1) 首次打开界面前先建号：按 README「首次设置清单」第 0 步用 curl 建第一个管理员"
 fi
-echo "    · 导入订阅 → 在 Orchestrate 里编排策略组"
+echo "    · 导入订阅 → 在 Orchestrate 里编排策略组（选了自动建组但当时没订阅的：导入后运行 sudo bash install.sh --autogroup 补建）"
 echo "    · 按 README 把 DNS 改成 TCP 版（重要，治断流）"
 echo "    · 旁路模式：在 global 配置里填 lan_interface（如 ens18），设备网关/DNS 指向本机"
