@@ -32,10 +32,34 @@ sudo bash install.sh
 **安装向导**：在终端里运行时会先依次询问（回车即默认值）——
 ① 面板管理员用户名（默认 admin）② 面板管理员密码（留空 = 装后手动建号）
 ③ 面板监听端口（默认 2023）④ 是否装假死看门狗（默认 是）
-⑤ 是否清理 v1 残留（默认 是）⑥ 下载线路（auto/direct/mirror，默认 auto）。
+⑤ 是否清理 v1 残留（默认 是）⑥ 下载线路（auto/direct/mirror，默认 auto）
+⑦ 是否装完自动按地区建分组（默认 否，见下节）。
 向导里设了密码的，装完会自动建好管理员账号（设备上已有账号则跳过、不改动），打开界面直接登录。
 无人值守可用环境变量代替向导：`DAEDUI_ADMIN_USER`、`DAEDUI_ADMIN_PASS`、`DAEDUI_PORT`、
-`DAEDUI_WATCHDOG=1/0`、`DAEDUI_CLEAN_V1=1/0`、`DAEDUI_ROUTE=auto/direct/mirror`（配合 `sudo -E`）。
+`DAEDUI_WATCHDOG=1/0`、`DAEDUI_CLEAN_V1=1/0`、`DAEDUI_ROUTE=auto/direct/mirror`、`DAEDUI_AUTOGROUP=1/0`（配合 `sudo -E`）。
+
+## 按地区自动分组（向导第 7 问 / `--autogroup`）
+
+节点多时挑节点费劲，可让脚本按节点名自动建七个地区组（策略统一 `min_moving_avg`）：
+
+| 组名 | 节点名命中规则（正则，任一命中即归组） |
+|---|---|
+| `HongKong` | 香港 / Hong Kong / 🇭🇰 / HK |
+| `USA` | 美国 / United States / 🇺🇸 / US / USA / 洛杉矶 / 硅谷 等 |
+| `Taiwan` | 台湾 / Taiwan / 🇹🇼 / TW |
+| `Japan` | 日本 / Japan / 🇯🇵 / JP / 东京 / 大阪 |
+| `Singapore` | 新加坡 / Singapore / 🇸🇬 / SG / 狮城 |
+| `Korea` | 韩国 / Korea / 🇰🇷 / KR / 首尔 |
+| `Others` | 以上都没命中的节点 |
+
+- 组名只能用英文：daed 的组名就是 dae 配置里的标识符（路由规则按名引用），后端强制
+  `^[a-zA-Z_][-a-zA-Z0-9_…]*$`，中文名建不出来。
+- 六个地区组是「订阅 + 正则」绑定：订阅更新进了新节点会自动归组，不用维护。
+  `Others` 没有排除型正则可用，是把剩余节点逐个钉进去的：订阅大批量更新后重跑一次刷新。
+- 时机：建组需要面板里**先有订阅**。装机时还没有订阅会直接跳过并提示；导入订阅后
+  单独补跑即可，不必重装：`sudo bash install.sh --autogroup`（会问账号/密码/端口，
+  也可用 `DAEDUI_ADMIN_*` 环境变量）。整个过程可重复运行：同名组跳过创建、只刷新
+  绑定，`Others` 会先清旧钉选再重算，不会越跑越多。
 
 ## ARM / 斐讯 N1（armbian）
 
