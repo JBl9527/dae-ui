@@ -1,7 +1,7 @@
 #!/bin/bash
 # dae-ui v2 —— 官方 daed 增强部署（不再使用自研面板）
-# 内容：daed 2.1.1 修复版（官方源码仅改 Web 登录流程，见下方 FIX_RELEASE 说明；
-#   内嵌 dae 内核 2.1.1 与其余部分与官方一致）+ 稳定性硬化
+# 内容：daed 2.1.1 修复版（官方源码改 Web 登录流程 + 新增 Nebula 默认主题，
+#   见下方 FIX_RELEASE 说明；内嵌 dae 内核 2.1.1 与其余部分与官方一致）+ 稳定性硬化
 #   1) systemd drop-in：Restart=always（官方 on-abnormal 不覆盖 panic 退出与假死）
 #   2) 看门狗 timer：每分钟探活 daed 的 HTTP，连续 2 次无响应自动重启（治“假死”）
 # 适用：Debian / Ubuntu，x86_64 与 arm64（斐讯 N1 等 armbian 盒子），root 运行。
@@ -14,7 +14,9 @@ DAED_VERSION="2.1.1"
 # 步骤状态被重置，nextStep() 失效，用户被弹回向导第 1 步、永远进不了面板。
 # 修复版仅改 apps/web 的 Setup 登录处理（存 token 前先路由到根路径），其余与官方
 # 源码逐一对应；包名与官方 installer 相同，.dgst 的 sha256 校验流程不变。
-FIX_RELEASE="daed-2.1.1-fix1"
+# fix2 另在 apps/web 新增 Nebula 深空蓝青主题并设为默认（原 8 套主题保留可切回），
+# 并做圆角/阴影/背景渐变等质感打磨；后端与内核仍未动。
+FIX_RELEASE="daed-2.1.1-fix2"
 BASE="https://github.com/JBl9527/dae-ui/releases/download/${FIX_RELEASE}"
 
 if [ "$(id -u)" != "0" ]; then
